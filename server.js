@@ -3,9 +3,21 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
-const sqlite3 = require("sqlite3");
-const { open } = require("sqlite");
 const jwt = require("jsonwebtoken");
+
+/* ============ SELECCIÓN MOTOR BASE DE DATOS ============
+   - Si existen TURSO_URL + TURSO_TOKEN en entorno: usa TURSO (LibSQL, BBDD cloud persistente, recomendado para PRODUCCIÓN)
+   - Si NO existen: usa SQLite3 en archivo local (modo desarrollo / PC propio / hosting con disco persistente)
+*/
+const TURSO_URL = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || "";
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN || process.env.TURSO_TOKEN || "";
+const USE_TURSO = Boolean(TURSO_URL && TURSO_TOKEN);
+
+if (USE_TURSO) {
+  console.log("☁️  MODO PRODUCCIÓN: Conectando a BBDD TURSO (LibSQL Cloud)...");
+} else {
+  console.log("💾 MODO LOCAL: Usando SQLite en archivo (data/gestion_obras.db)...");
+}
 
 const PORT = process.env.PORT || 8082;
 const HOST = process.env.HOST || "0.0.0.0";
@@ -16,26 +28,33 @@ const BASE_DIR = __dirname;
 const DATA_DIR = process.env.DATA_DIR || path.join(BASE_DIR, "data");
 const DB_PATH = path.join(DATA_DIR, "gestion_obras.db");
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!USE_TURSO && !fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-let db;
+let db = null;        // Driver sqlite (wrapper promise) local
+let tursoClient = null; // Driver @libsql/client (si usamos Turso cloud)
 
-(async () => {
-  db = await open({ filename: DB_PATH, driver: sqlite3.Database });
-  await db.run("PRAGMA journal_mode = WAL;");
-  await db.run("PRAGMA foreign_keys = ON;");
-  await initDatabase();
-  await seedInitialData();
-  app.listen(PORT, HOST, () => printStartupBanner());
-})().catch((err) => {
-  console.error("Fatal error al iniciar la BBDD:", err);
-  process.exit(1);
-});
-
-/* =============== HELPERS DB =============== */
-async function dbAll(sql, params = []) { return db.all(sql, params); }
-async function dbGet(sql, params = []) { return db.get(sql, params); }
+/* =============== HELPERS DB (COMPATIBLES CON AMBOS MOTORES) =============== */
+async function dbAll(sql, params = []) {
+  if (USE_TURSO) {
+    const rs = await tursoClient.execute({ sql, args: params });
+    return rs.rows.map((r) => Object.fromEntries(Object.entries(r)));
+  }
+  return db.all(sql, params);
+}
+async function dbGet(sql, params = []) {
+  if (USE_TURSO) {
+    const rs = await tursoClient.execute({ sql, args: params });
+    return rs.rows.length ? Object.fromEntries(Object.entries(rs.rows[0])) : null;
+  }
+  return db.get(sql, params);
+}
 async function dbRun(sql, params = []) {
+  if (USE_TURSO) {
+    const rs = await tursoClient.execute({ sql, args: params });
+    const lastId = Number(rs.lastInsertRowid) || null;
+    const changes = Number(rs.rowsAffected) || 0;
+    return { lastID: lastId, changes };
+  }
   const r = await db.run(sql, params);
   return { lastID: r.lastID, changes: r.changes };
 }
@@ -91,9 +110,33 @@ app.post("/api/auth/cambiar-pin-admin", authMiddleware, requireAdmin, async (req
   const row = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);
   const adminPin = row?.valor || DEFAULT_ADMIN_PIN;
   if (String(adminPin) !== String(actual)) return res.status(401).json({ error: "PIN actual incorrecto" });
-  await dbRun(`INSERT INTO settings (clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`,
-    ["admin_pin", String(nuevo)]);
+  const upsertSql = USE_TURSO
+    ? `INSERT INTO settings (clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`
+    : `INSERT INTO settings (clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`;
+  await dbRun(upsertSql, ["admin_pin", String(nuevo)]);
   res.json({ ok: true });
+});
+
+/* =============== INICIALIZACIÓN CONECTORES + TABLAS + START =============== */
+(async () => {
+  if (USE_TURSO) {
+    const { createClient } = require("@libsql/client");
+    tursoClient = createClient({ url: TURSO_URL, authToken: TURSO_TOKEN });
+    // Forzamos UTC igual en SQLite y Turso
+    await tursoClient.execute("SET timezone = 'UTC'").catch(() => {});
+  } else {
+    const sqlite3 = require("sqlite3").verbose();
+    const { open } = require("sqlite");
+    db = await open({ filename: DB_PATH, driver: sqlite3.Database });
+    await db.run("PRAGMA journal_mode = WAL;").catch(() => {});
+    await db.run("PRAGMA foreign_keys = ON;").catch(() => {});
+  }
+  await initDatabase();
+  await seedInitialData();
+  app.listen(PORT, HOST, () => printStartupBanner());
+})().catch((err) => {
+  console.error("❌ Fatal error al iniciar la BBDD o servidor:", err);
+  process.exit(1);
 });
 
 /* =============== ENDPOINTS / DATOS GENERALES =============== */

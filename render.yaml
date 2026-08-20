@@ -10,7 +10,3 @@ services:
         generateValue: true
       - key: NODE_VERSION
         value: 20.11.0
-    disk:
-      name: sqlite-data
-      mountPath: /app/data
-      sizeGB: 1
