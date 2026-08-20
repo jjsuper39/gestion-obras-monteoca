@@ -35,28 +35,43 @@ let tursoClient = null; // Driver @libsql/client (si usamos Turso cloud)
 
 /* =============== HELPERS DB (COMPATIBLES CON AMBOS MOTORES) =============== */
 async function dbAll(sql, params = []) {
-  if (USE_TURSO) {
-    const rs = await tursoClient.execute({ sql, args: params });
-    return rs.rows.map((r) => Object.fromEntries(Object.entries(r)));
+  try {
+    if (USE_TURSO) {
+      const rs = await tursoClient.execute({ sql, args: params });
+      return rs.rows.map((r) => Object.fromEntries(Object.entries(r)));
+    }
+    return db.all(sql, params);
+  } catch (e) {
+    console.error("❌ dbAll ERROR SQL:", sql, params, e.message);
+    throw e;
   }
-  return db.all(sql, params);
 }
 async function dbGet(sql, params = []) {
-  if (USE_TURSO) {
-    const rs = await tursoClient.execute({ sql, args: params });
-    return rs.rows.length ? Object.fromEntries(Object.entries(rs.rows[0])) : null;
+  try {
+    if (USE_TURSO) {
+      const rs = await tursoClient.execute({ sql, args: params });
+      return rs.rows.length ? Object.fromEntries(Object.entries(rs.rows[0])) : null;
+    }
+    return db.get(sql, params);
+  } catch (e) {
+    console.error("❌ dbGet ERROR SQL:", sql, params, e.message);
+    throw e;
   }
-  return db.get(sql, params);
 }
 async function dbRun(sql, params = []) {
-  if (USE_TURSO) {
-    const rs = await tursoClient.execute({ sql, args: params });
-    const lastId = Number(rs.lastInsertRowid) || null;
-    const changes = Number(rs.rowsAffected) || 0;
-    return { lastID: lastId, changes };
+  try {
+    if (USE_TURSO) {
+      const rs = await tursoClient.execute({ sql, args: params });
+      const lastId = Number(rs.lastInsertRowid) || null;
+      const changes = Number(rs.rowsAffected) || 0;
+      return { lastID: lastId, changes };
+    }
+    const r = await db.run(sql, params);
+    return { lastID: r.lastID, changes: r.changes };
+  } catch (e) {
+    console.error("❌ dbRun ERROR SQL:", sql, params, e.message);
+    throw e;
   }
-  const r = await db.run(sql, params);
-  return { lastID: r.lastID, changes: r.changes };
 }
 
 /* =============== EXPRESS =============== */
@@ -388,18 +403,23 @@ app.delete("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res
 app.get("/api/cajas", authMiddleware, requireAdmin, async (req, res) => {
   const { desde, hasta } = req.query || {};
   let where = ""; const params = [];
-  if (desde) { where += " AND m.fecha >= ?"; params.push(desde); }
-  if (hasta) { where += " AND m.fecha <= ?"; params.push(hasta); }
+  if (desde) { where += " AND fecha >= ?"; params.push(desde); }
+  if (hasta) { where += " AND fecha <= ?"; params.push(hasta); }
+  // Subconsulta para compatibilidad Turso + SQLite
   const rows = await dbAll(`
     SELECT
       t.id AS trabajadorId, t.nombre, t.rol,
-      SUM(CASE WHEN m.tipo = 'ingreso' THEN m.importe ELSE 0 END) AS ingresos,
-      SUM(CASE WHEN m.tipo = 'gasto' THEN m.importe ELSE 0 END) AS gastos,
-      COUNT(m.id) AS numMov
+      COALESCE(SUM(CASE WHEN mm.tipo = 'ingreso' THEN mm.importe ELSE 0 END), 0) AS ingresos,
+      COALESCE(SUM(CASE WHEN mm.tipo = 'gasto' THEN mm.importe ELSE 0 END), 0) AS gastos,
+      COALESCE(COUNT(mm.id), 0) AS numMov
     FROM trabajadores t
-    LEFT JOIN movimientos m ON m.responsableId = t.id ${where ? "AND 1=1 " + where : ""}
+    LEFT JOIN (
+      SELECT m.id, m.responsableId, m.tipo, m.importe, m.fecha
+      FROM movimientos m
+      WHERE 1=1 ${where}
+    ) mm ON mm.responsableId = t.id
     WHERE t.activo = 1
-    GROUP BY t.id
+    GROUP BY t.id, t.nombre, t.rol
     ORDER BY t.rol DESC, t.nombre ASC
   `, params);
   const saldos = rows.map((r) => ({
@@ -598,9 +618,19 @@ async function initDatabase() {
   for (const s of stmts) {
     try { await dbRun(s + ";"); } catch (e) { /* ignoramos errores por tablas ya existentes */ }
   }
-  // Añadir columnas nuevas si la tabla era anterior (sin ellas)
-  try { await dbRun("ALTER TABLE movimientos ADD COLUMN responsableId TEXT;").catch(() => {}); } catch {}
-  try { await dbRun("ALTER TABLE movimientos ADD FOREIGN KEY (responsableId) REFERENCES trabajadores(id) ON DELETE SET NULL;").catch(() => {}); } catch {}
+  // Añadir columna responsableId si faltaba (BBDD creada antes de esta actualización)
+  try {
+    const cols = await dbAll(`PRAGMA table_info(movimientos);`).catch(() => []);
+    const hasCol = (cols || []).some((c) => String(c.name || "").toLowerCase() === "responsableid");
+    if (!hasCol) {
+      console.log("🔄 MIGRACIÓN: Añadiendo columna responsableId a la tabla movimientos...");
+      await dbRun("ALTER TABLE movimientos ADD COLUMN responsableId TEXT;").catch(() => {});
+      try {
+        await dbRun("CREATE INDEX IF NOT EXISTS idx_movimientos_responsable ON movimientos (responsableId);").catch(() => {});
+      } catch {}
+      console.log("✅ MIGRACIÓN OK: Columna responsableId añadida.");
+    }
+  } catch (e) { console.warn("⚠️ No se pudo comprobar migracion columna responsableId:", e.message); }
 }
 async function seedInitialData() {
   const pinRow = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);
