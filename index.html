@@ -171,9 +171,18 @@
         <div class="panel-head">
           <h2>Listado de Trabajadores</h2>
           <div class="actions compact">
+            <div style="display:flex;align-items:center;gap:.4rem;">
+              <label for="trabajadoresDesde" style="font-weight:500;">📅 Periodo cálculo nómina:</label>
+              <input type="date" id="trabajadoresDesde" style="width:160px;" />
+              <span>a</span>
+              <input type="date" id="trabajadoresHasta" style="width:160px;" />
+            </div>
+            <button type="button" class="btn small" id="btnTrabMes">📅 Este Mes</button>
+            <button type="button" class="btn small ghost" id="btnTrabActualizar">🔄 Actualizar Cálculos</button>
             <input type="search" id="buscarTrabajador" placeholder="🔍 Buscar trabajador..." style="width: 240px;" />
           </div>
         </div>
+        <p class="hint" style="margin:.2rem 0 .7rem;padding:.4rem .8rem;background:#eff6ff;border-radius:.5rem;color:#1e3a8a;border:1px solid #bfdbfe;">💡 Para cada trabajador: <b>Horas Devengadas (€)</b> = coste total de todas sus horas en el periodo · <b>Entregas a Cuenta</b> = suma de todos los GASTOS registrados en su caja (dinero que le entregaste). · <b>NETO A PAGAR FIN DE MES = Horas Devengadas - Entregas a Cuenta</b>. Si sale <b>negativo</b> → <b>ÉL TE DEBE</b> dinero a la empresa.</p>
         <ul id="listaTrabajadores" class="list"></ul>
       </div>
     </section>
@@ -701,6 +710,49 @@
       <menu>
         <button value="cancel" class="btn">Cancelar</button>
         <button value="default" class="btn primary" id="qnoSubmit">💾 Crear y usar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="entregaCuentaDialog">
+    <form method="dialog" class="dialog-form" id="entregaCuentaForm">
+      <h3 style="margin-top:0;">💸 Entregar Dinero a Cuenta (Adelanto Nómina / Prestamo)</h3>
+      <p class="hint" id="ecTrabajadorNombre" style="font-weight:600;color:#7c2d12;background:#fff7ed;padding:.5rem;border-radius:.5rem;border:1px solid #fdba74;">Trabajador: —</p>
+      <input type="hidden" id="ecTrabajadorId" />
+      <div class="form-grid">
+        <div>
+          <label for="ecFecha">Fecha *</label>
+          <input id="ecFecha" type="date" required />
+        </div>
+        <div>
+          <label for="ecImporte">Importe Entregado (€) *</label>
+          <input id="ecImporte" type="number" step="0.01" min="0.01" required placeholder="Ej: 1500 (entregado en efectivo / transferencia)" />
+        </div>
+        <div>
+          <label for="ecFormaPago">💳 Forma de Pago *</label>
+          <select id="ecFormaPago">
+            <option value="efectivo">💵 Efectivo</option>
+            <option value="transferencia">🏦 Transferencia Bancaria</option>
+            <option value="bizum">📱 Bizum</option>
+            <option value="cheque">📝 Cheque</option>
+            <option value="otros">📎 Otros</option>
+          </select>
+        </div>
+        <div>
+          <label for="ecObraId">🏢 Asociar a Obra (opcional)</label>
+          <select id="ecObraId">
+            <option value="">Sin asignar (general / nómina)</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:.5rem;">
+        <label for="ecConcepto">🧾 Concepto / Notas (muy recomendado para balance):</label>
+        <input id="ecConcepto" type="text" value="Adelanto nómina mes en curso" placeholder="Ej: Adelanto nómina agosto 2025 / Reembolso materiales compra / Préstamo" />
+      </div>
+      <p id="ecStatus" class="status"></p>
+      <menu>
+        <button value="cancel" class="btn">Cancelar</button>
+        <button value="default" class="btn danger" style="background:#be123c;border-color:#9f1239;">💸 Confirmar Entrega</button>
       </menu>
     </form>
   </dialog>

@@ -48,6 +48,8 @@ const state = {
     buscarTrabajador: "",
     buscarObra: "",
     filtroEstadoObra: "todos",
+    trabajadoresDesde: null,
+    trabajadoresHasta: null,
     horas: { desde: null, hasta: null, trabajador: "todos", obra: "todas" },
     mov: { desde: null, hasta: null, tipo: "todos", obra: "todas" },
     cajas: { desde: null, hasta: null, selectedTrabajadorId: null },
@@ -717,6 +719,9 @@ async function deleteTrabajador(id) {
 
 function renderTrabajadores() {
   const q = state.filtros.buscarTrabajador.trim().toLowerCase();
+  const desde = state.filtros.trabajadoresDesde || startOfMonthISO();
+  const hasta = state.filtros.trabajadoresHasta || todayISO();
+
   const lista = state.trabajadores
     .filter((t) => {
       if (!q) return true;
@@ -732,45 +737,94 @@ function renderTrabajadores() {
   }
 
   lista.forEach((t) => {
-    const d = new Date();
-    const horasMes = state.horas
-      .filter((h) => h.trabajadorId === t.id && isSameMonth(h.fecha, d.getMonth() + 1, d.getFullYear()))
+    const horasPeriodo = state.horas
+      .filter((h) => h.trabajadorId === t.id && (h.fecha||"") >= desde && (h.fecha||"") <= hasta)
       .reduce((s, h) => s + (Number(h.cantidad) || 0), 0);
-    const costeMes = state.horas
-      .filter((h) => h.trabajadorId === t.id && isSameMonth(h.fecha, d.getMonth() + 1, d.getFullYear()))
+    const devengado = state.horas
+      .filter((h) => h.trabajadorId === t.id && (h.fecha||"") >= desde && (h.fecha||"") <= hasta)
       .reduce((s, h) => s + (Number(h.costeTotal) || 0), 0);
+    const entregasCuenta = state.movimientos
+      .filter((m) =>
+        m.responsableId === t.id &&
+        m.tipo === "gasto" &&
+        (m.fecha||"") >= desde && (m.fecha||"") <= hasta &&
+        ["nomina","prestamo","adelanto","entrega_a_cuenta","reembolso"].includes(String(m.categoria||"general").toLowerCase())
+      )
+      .reduce((s,m)=> s + (Number(m.importe)||0), 0);
+    const netoAPagar = Number(devengado - entregasCuenta).toFixed(2);
+    const signoNeto = Number(netoAPagar);
+
     const li = document.createElement("li");
     li.className = "item";
-    li.style.borderLeftColor = t.activo ? "#16a34a" : "#94a3b8";
+    li.style.borderLeft = ".5rem solid " + (t.activo ? "#16a34a" : "#94a3b8");
+    const esAdmin = t.rol === "admin";
+    const badgeNetoColor = signoNeto < 0 ? "#be123c" : (signoNeto > 0 ? "#047857" : "#475569");
     li.innerHTML = `
-      <div class="item-header">
-        <div>
-          <h4>${escapeHtml(t.nombre)}</h4>
+      <div class="item-header" style="gap:.7rem;">
+        <div style="flex:1;min-width:260px;">
+          <h4>${escapeHtml(t.nombre)} ${esAdmin ? '<span style="font-size:.85rem;background:#fef3c7;color:#92400e;border-radius:.4rem;padding:.1rem .35rem;border:1px solid #fcd34d;">👑 Socio/Admin</span>' : ""}</h4>
           <div class="meta-tags">
             <span class="tag estado-${t.activo ? "activo" : "inactivo"}">${t.activo ? "✅ Activo" : "❌ Inactivo"}</span>
-            ${t.rol === "admin" ? `<span class="tag tipo-ingreso">👑 ADMIN</span>` : `<span class="tag categoria">👷 Trabajador</span>`}
+            ${esAdmin ? `<span class="tag tipo-ingreso">👑 ADMIN</span>` : `<span class="tag categoria">👷 Trabajador</span>`}
             ${t.categoria ? `<span class="tag categoria">${escapeHtml(t.categoria)}</span>` : ""}
             <span class="tag categoria">🔐 PIN: ${escapeHtml(t.pin || "-")}</span>
+            <span class="tag categoria">💶 Base ${formatMoney(t.tarifa)}/h · Extra ${formatMoney(t.tarifaExtra || t.tarifa)}/h</span>
           </div>
         </div>
-        <div style="text-align:right;">
-          <div style="font-weight:700;">Base: ${formatMoney(t.tarifa)}/h</div>
-          <div style="color:var(--warning);font-weight:700;">Extra: ${formatMoney(t.tarifaExtra || t.tarifa)}/h</div>
-          <div style="color:var(--muted);font-size:.85rem;margin-top:.2rem;">Mes: ${horasMes.toFixed(1)}h → ${formatMoney(costeMes)}</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(120px,auto));gap:.35rem .7rem;text-align:right;min-width:360px;">
+          <div style="font-size:.85rem;color:#334155;">⏱️ Horas periodo:</div>
+          <div style="font-weight:700;">${horasPeriodo.toFixed(1)} h</div>
+          <div style="font-size:.85rem;color:#334155;">💼 Horas Devengadas:</div>
+          <div style="font-weight:700;color:#0f766e;">${formatMoney(devengado)}</div>
+          <div style="font-size:.85rem;color:#334155;">💸 Entregas a Cuenta (adelantos):</div>
+          <div style="font-weight:700;color:#be123c;">${formatMoney(entregasCuenta)}</div>
+          <div style="font-size:.85rem;color:#334155;font-weight:600;">🧾 NETO A PAGAR:</div>
+          <div style="font-weight:900;font-size:1.05rem;color:${badgeNetoColor};background:${signoNeto<0?"#fff1f2":"#ecfdf5"};padding:.15rem .5rem;border-radius:.4rem;border:1px solid ${badgeNetoColor};">${signoNeto>=0?"+ ":""}${formatMoney(netoAPagar)} ${signoNeto<0 ? " (ÉL TE DEBE)":(signoNeto>0?" (TE DEBES A ÉL)":"")}</div>
         </div>
       </div>
-      <p>${t.dni ? `📋 ${escapeHtml(t.dni)}` : ""} ${t.telefono ? ` 📞 ${escapeHtml(t.telefono)}` : ""}</p>
-      <div class="item-actions">
+      <p style="margin:.35rem 0 .55rem;color:#475569;font-size:.9rem;">
+        ${t.dni ? `📋 ${escapeHtml(t.dni)}` : ""}${t.telefono ? ` · 📞 ${escapeHtml(t.telefono)}` : ""}${t.email ? ` · ✉️ ${escapeHtml(t.email)}` : ""}${t.direccion ? ` · 🏠 ${escapeHtml(t.direccion)}` : ""}
+      </p>
+      <div class="item-actions" style="gap:.4rem;flex-wrap:wrap;">
+        <button class="btn small danger" style="background:#be123c;border-color:#9f1239;" data-entrega-cuenta="${t.id}">💸 Entregar a Cuenta (Adelanto)</button>
         <button class="btn small primary" data-edit-trabajador="${t.id}">✏️ Editar</button>
+        <button class="btn small ghost" data-ver-caja="${t.id}">🧾 Ver Movimientos Caja</button>
         <button class="btn small danger" data-del-trabajador="${t.id}">🗑️ Eliminar</button>
       </div>`;
     ul.appendChild(li);
   });
 
   ul.querySelectorAll("[data-edit-trabajador]").forEach((b) =>
-    b.addEventListener("click", () => { const t = getTrabajadorById(b.dataset.editTrabajador); if (t) fillTrabajadorForm(t); window.scrollTo({ top: 0, behavior: "smooth" }); }));
+    b.addEventListener("click", () => { const t = getTrabajadorById(b.dataset.editTrabajador); if (t) { fillTrabajadorForm(t); window.scrollTo({ top: 0, behavior: "smooth" }); } }));
   ul.querySelectorAll("[data-del-trabajador]").forEach((b) =>
     b.addEventListener("click", () => deleteTrabajador(b.dataset.delTrabajador)));
+  ul.querySelectorAll("[data-entrega-cuenta]").forEach((b) =>
+    b.addEventListener("click", () => abrirEntregaCuenta(b.dataset.entregaCuenta)));
+  ul.querySelectorAll("[data-ver-caja]").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.filtros.cajas.selectedTrabajadorId = b.dataset.verCaja;
+      activateTab("cajas");
+      try { refreshCajasFull(); } catch {}
+    }));
+}
+
+function abrirEntregaCuenta(trabajadorId) {
+  const t = getTrabajadorById(trabajadorId);
+  if (!t) return;
+  const dlg = document.getElementById("entregaCuentaDialog");
+  if (!dlg) return;
+  document.getElementById("ecTrabajadorId").value = t.id;
+  const nom = document.getElementById("ecTrabajadorNombre");
+  nom.textContent = `👷 Trabajador: ${t.nombre} · PIN: ${t.pin} · Puesto: ${t.categoria||"—"}`;
+  document.getElementById("ecFecha").value = todayISO();
+  document.getElementById("ecImporte").value = "";
+  document.getElementById("ecConcepto").value = "Adelanto nómina mes en curso";
+  document.getElementById("ecStatus").textContent = "";
+  const sel = document.getElementById("ecObraId");
+  sel.innerHTML = `<option value="">Sin asignar (general / nómina)</option>` +
+    state.obras.map(o => `<option value="${o.id}">🏢 ${escapeHtml(o.nombre)} · ${escapeHtml(o.cliente||"")}</option>`).join("");
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else alert("Tu navegador no soporta diálogos nativos. Usa Contabilidad → Nuevo Gasto, categoría nómina, Responsable = trabajador.");
 }
 
 /* ============ OBRAS (ADMIN) ============ */
@@ -1979,6 +2033,63 @@ function bindGeneralEvents() {
   els.trabajadorForm.addEventListener("submit", onSubmitTrabajador);
   els.btnLimpiarTrabajador.addEventListener("click", clearTrabajadorForm);
   els.buscarTrabajador.addEventListener("input", (e) => { state.filtros.buscarTrabajador = e.target.value; renderTrabajadores(); });
+  const td = document.getElementById("trabajadoresDesde");
+  const th = document.getElementById("trabajadoresHasta");
+  if (td) td.addEventListener("change", (e) => { state.filtros.trabajadoresDesde = e.target.value || null; renderTrabajadores(); });
+  if (th) th.addEventListener("change", (e) => { state.filtros.trabajadoresHasta = e.target.value || null; renderTrabajadores(); });
+  const btnTrabMes = document.getElementById("btnTrabMes");
+  if (btnTrabMes) btnTrabMes.addEventListener("click", () => {
+    state.filtros.trabajadoresDesde = startOfMonthISO();
+    state.filtros.trabajadoresHasta = todayISO();
+    if (td) td.value = state.filtros.trabajadoresDesde;
+    if (th) th.value = state.filtros.trabajadoresHasta;
+    renderTrabajadores();
+  });
+  const btnTrabAct = document.getElementById("btnTrabActualizar");
+  if (btnTrabAct) btnTrabAct.addEventListener("click", async () => { await forceSyncUI(); renderTrabajadores(); });
+
+  // Submit Entrega a Cuenta (modal nuevo)
+  const formEC = document.getElementById("entregaCuentaForm");
+  if (formEC) {
+    formEC.addEventListener("submit", async (ev) => {
+      if (ev.submitter && ev.submitter.value === "cancel") return;
+      ev.preventDefault();
+      const trabajadorId = document.getElementById("ecTrabajadorId").value;
+      const t = getTrabajadorById(trabajadorId);
+      const stEC = document.getElementById("ecStatus");
+      const importe = Number(document.getElementById("ecImporte").value || 0);
+      if (!t || !trabajadorId) { setStatus(stEC, "Trabajador no encontrado", true); return; }
+      if (!(importe > 0)) { setStatus(stEC, "Importe incorrecto", true); return; }
+      try {
+        setStatus(stEC, "⏳ Guardando entrega a cuenta...", false);
+        const payload = {
+          fecha: document.getElementById("ecFecha").value || todayISO(),
+          tipo: "gasto",
+          importe: importe.toFixed(2),
+          obraId: document.getElementById("ecObraId").value || "",
+          responsableId: trabajadorId,
+          categoria: "nomina",
+          formaPago: document.getElementById("ecFormaPago").value || "efectivo",
+          concepto: document.getElementById("ecConcepto").value.trim() || "Adelanto nómina / entrega a cuenta",
+          notas: "",
+          createdAt: new Date().toISOString(),
+        };
+        await saveMovimientoCUD("POST", payload);
+        state.cajasData = null;
+        await loadAllData(false, true);
+        populateResponsablesSelect();
+        try { await renderAll(); } catch {}
+        setStatus(stEC, `✅ Entrega ${formatMoney(importe)} a "${t.nombre}" registrada correctamente. Neto a pagar actualizado.`, false, true);
+        setTimeout(() => {
+          const dlg = document.getElementById("entregaCuentaDialog");
+          if (dlg && typeof dlg.close === "function") dlg.close();
+          setStatus(stEC, "");
+        }, 1200);
+      } catch (err) {
+        setStatus(stEC, "❌ " + err.message, true);
+      }
+    });
+  }
 
   els.obraForm.addEventListener("submit", onSubmitObra);
   els.btnLimpiarObra.addEventListener("click", clearObraForm);
