@@ -373,7 +373,7 @@ function applyRoleUI() {
   }
 }
 
-function activateTab(name) {
+async function activateTab(name) {
   let activated = false;
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     if (btn.dataset.tab === name && !btn.classList.contains("hidden")) {
@@ -391,17 +391,22 @@ function activateTab(name) {
     }
   });
   if (!activated) {
-    // Fallback: primera pestaña visible
     const firstVisible = document.querySelector(".tab-btn:not(.hidden)");
-    if (firstVisible) activateTab(firstVisible.dataset.tab);
+    if (firstVisible) return activateTab(firstVisible.dataset.tab);
+  }
+  if (state.session?.role) {
+    try {
+      const ok = await loadAllData(true);
+      if (ok) renderAll();
+    } catch (e) { /* ignore */ }
   }
 }
 
 function setupTabs() {
   document.querySelectorAll(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       if (btn.classList.contains("hidden")) return;
-      activateTab(btn.dataset.tab);
+      await activateTab(btn.dataset.tab);
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
   });
@@ -430,7 +435,7 @@ async function loginWorker(trabajadorId, pin) {
   }
 }
 
-async function loadAllData() {
+async function loadAllData(silent = false) {
   loadSession();
   if (!getToken() || !state.session.role) return false;
   try {
@@ -442,7 +447,7 @@ async function loadAllData() {
     if (d.adminPin) state.adminPin = d.adminPin;
     return true;
   } catch (e) {
-    logout(true);
+    if (!silent) logout(true);
     return false;
   }
 }
@@ -1922,7 +1927,6 @@ async function init() {
     applyRoleUI();
     renderAll();
   } else {
-    // Cargar la lista de trabajadores (nombres y ids públicos) para el select login
     try {
       const dummyTok = getToken();
       if (dummyTok) {
@@ -1931,6 +1935,27 @@ async function init() {
     } catch {}
     showLoginScreen();
   }
+
+  function canAutoRefresh() {
+    if (!state.session?.role) return false;
+    if (document.hidden) return false;
+    const dialogs = document.querySelectorAll("dialog");
+    for (const d of dialogs) if (d.open) return false;
+    const ae = document.activeElement;
+    if (ae && ["INPUT","TEXTAREA","SELECT"].includes(ae.tagName) && ae.type !== "submit" && ae.type !== "button") return false;
+    return true;
+  }
+  async function silentRefresh() {
+    if (!canAutoRefresh()) return;
+    try {
+      const ok2 = await loadAllData(true);
+      if (ok2) renderAll();
+    } catch (e) { /* ignore */ }
+  }
+
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) silentRefresh(); });
+  window.addEventListener("focus", silentRefresh);
+  setInterval(silentRefresh, 10000);
 }
 
 document.addEventListener("DOMContentLoaded", init);
