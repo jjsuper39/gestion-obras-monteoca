@@ -50,7 +50,9 @@ const state = {
     filtroEstadoObra: "todos",
     horas: { desde: null, hasta: null, trabajador: "todos", obra: "todas" },
     mov: { desde: null, hasta: null, tipo: "todos", obra: "todas" },
+    cajas: { desde: null, hasta: null, selectedTrabajadorId: null },
   },
+  cajasData: null, // cache del último resultado GET /api/cajas
 };
 
 const els = {};
@@ -1229,6 +1231,7 @@ function clearMovimientoForm() {
   els.movimientoTipo.value = "ingreso";
   els.movimientoImporte.value = "";
   els.movimientoObra.value = "";
+  els.movimientoResponsable.value = "";
   els.movimientoCategoria.value = "facturacion";
   els.movimientoFormaPago.value = "transferencia";
   els.movimientoConcepto.value = "";
@@ -1241,6 +1244,7 @@ function fillMovimientoForm(m) {
   els.movimientoTipo.value = m.tipo || "ingreso";
   els.movimientoImporte.value = m.importe || "";
   els.movimientoObra.value = m.obraId || "";
+  els.movimientoResponsable.value = m.responsableId || "";
   els.movimientoCategoria.value = m.categoria || "";
   els.movimientoFormaPago.value = m.formaPago || "otro";
   els.movimientoConcepto.value = m.concepto || "";
@@ -1257,6 +1261,7 @@ async function onSubmitMovimiento(e) {
     tipo: els.movimientoTipo.value,
     importe: Number(els.movimientoImporte.value) || 0,
     obraId: els.movimientoObra.value || null,
+    responsableId: els.movimientoResponsable.value || null,
     categoria: els.movimientoCategoria.value,
     formaPago: els.movimientoFormaPago.value || "otro",
     concepto: els.movimientoConcepto.value.trim(),
@@ -1266,6 +1271,7 @@ async function onSubmitMovimiento(e) {
     setStatus(els.movimientoStatus, "Campos obligatorios incompletos", true); return;
   }
   if (data.obraId === "") data.obraId = null;
+  if (data.responsableId === "") data.responsableId = null;
   try {
     if (id) {
       await saveMovCUD("PUT", { ...data, id });
@@ -1277,6 +1283,7 @@ async function onSubmitMovimiento(e) {
     clearMovimientoForm();
     await loadAllData();
     renderMovimientos(); renderBalanceGeneral(); renderObras(); renderDashboard(); renderCierre();
+    renderCajas();
   } catch (err) {
     setStatus(els.movimientoStatus, "❌ " + err.message, true);
   }
@@ -1288,6 +1295,7 @@ async function deleteMovimiento(id) {
     await saveMovCUD("DELETE", { id });
     await loadAllData();
     renderMovimientos(); renderBalanceGeneral(); renderObras(); renderDashboard(); renderCierre();
+    renderCajas();
   } catch (err) { alert("❌ " + err.message); }
 }
 
@@ -1719,6 +1727,7 @@ async function submitQuickMov() {
     tipo,
     importe,
     obraId,
+    responsableId: els.qmResponsable.value || null,
     categoria: els.qmCategoria.value,
     formaPago: els.qmFormaPago.value || "otro",
     concepto,
@@ -1733,6 +1742,7 @@ async function submitQuickMov() {
     alert(msg);
     if (typeof els.quickMovDialog.close === "function") els.quickMovDialog.close();
     renderBalanceGeneral(); renderMovimientos(); renderObras(); renderDashboard(); renderCierre();
+    renderCajas();
     return true;
   } catch (err) {
     setStatus(els.qmStatus, "❌ " + err.message, true);
@@ -1833,7 +1843,7 @@ function cacheEls() {
     "filtroHorasObra","btnAplicarFiltrosHoras","btnLimpiarFiltrosHoras",
     "totalHorasFiltradas","totalCosteHoras","totalRegistrosHoras",
     "movimientoForm","movimientoId","movimientoFecha","movimientoTipo","movimientoImporte",
-    "movimientoObra","movimientoCategoria","movimientoFormaPago","movimientoConcepto",
+    "movimientoObra","movimientoResponsable","movimientoCategoria","movimientoFormaPago","movimientoConcepto",
     "movimientoReferencia","btnGuardarMovimiento","btnLimpiarMovimiento","movimientoStatus",
     "listaMovimientos","totalIngresos","totalGastos","balanceNeto",
     "filtroMovDesde","filtroMovHasta","filtroMovTipo","filtroMovObra",
@@ -1846,7 +1856,9 @@ function cacheEls() {
     "btnExportarTodo","btnBorrarTodo",
     "quickObra","btnQuickNewObra","quickNewObraDialog","quickNewObraForm",
     "qnoNombre","qnoCliente","qnoDireccion","qnoStatus","qnoSubmit",
-    "quickMovDialog","quickMovForm","qmTitle","qmHint","qmObraId","qmTipo","qmFecha","qmImporte","qmCategoria","qmFormaPago","qmConcepto","qmReferencia","qmStatus","qmSubmit",
+    "quickMovDialog","quickMovForm","qmTitle","qmHint","qmObraId","qmTipo","qmFecha","qmImporte","qmResponsable","qmCategoria","qmFormaPago","qmConcepto","qmReferencia","qmStatus","qmSubmit",
+    "cajasDesde","cajasHasta","btnCajasMesActual","btnCajasTodo","btnCajasRefresh",
+    "cajasGlobalCards","cajasSaldosTable","cajasSelectedInfo","cajasMovimientosList","cajasMovTitle",
   ];
   ids.forEach((id) => { els[id] = document.getElementById(id); });
 }
@@ -1920,6 +1932,7 @@ function renderAll() {
     fechas.forEach((f) => recalcularDesgloseParaTrabajadorDia(tid, f));
   });
   renderSelects();
+  populateResponsablesSelect();
   if (isAdmin()) {
     renderTrabajadores();
     renderObras();
@@ -1927,11 +1940,174 @@ function renderAll() {
     renderBalanceGeneral();
     renderMovimientos();
     renderCierre();
+    renderCajas();
   } else if (isWorker()) {
     populateWorkerQuickForm();
     renderWorkerSummary();
   }
   renderHoras();
+}
+
+/* ============ RESPONSABLES / CAJAS (SOCIOS) ============ */
+function populateResponsablesSelect() {
+  const opts = ['<option value="">Sin asignar (general)</option>'];
+  getTrabajadoresActivos().forEach(t => {
+    const rolLabel = t.rol === "admin" ? "👑 Socio/Admin" : "👷 Trabajador";
+    opts.push(`<option value="${t.id}">${rolLabel} · ${escapeHtml(t.nombre)}</option>`);
+  });
+  if (els.movimientoResponsable) {
+    const prev = els.movimientoResponsable.value;
+    els.movimientoResponsable.innerHTML = opts.join("");
+    if (prev) els.movimientoResponsable.value = prev;
+  }
+  if (els.qmResponsable) {
+    const prev2 = els.qmResponsable.value;
+    els.qmResponsable.innerHTML = opts.join("");
+    if (prev2) els.qmResponsable.value = prev2;
+  }
+}
+
+async function loadCajasData() {
+  if (!isAdmin()) return null;
+  const qs = new URLSearchParams();
+  if (state.filtros.cajas.desde) qs.set("desde", state.filtros.cajas.desde);
+  if (state.filtros.cajas.hasta) qs.set("hasta", state.filtros.cajas.hasta);
+  const q = qs.toString();
+  const data = await api(`/api/cajas${q ? "?" + q : ""}`);
+  state.cajasData = data || null;
+  return state.cajasData;
+}
+function renderCajasGlobalCards() {
+  if (!isAdmin() || !els.cajasGlobalCards) return;
+  const d = state.cajasData?.saldos || [];
+  let totalIngresos = 0, totalGastos = 0, totalSocios = 0, totalSaldos = 0;
+  d.forEach((r) => {
+    if (r.rol === "admin") totalSocios++;
+    totalIngresos += r.ingresos || 0;
+    totalGastos += r.gastos || 0;
+    totalSaldos += r.saldo || 0;
+  });
+  const cards = [
+    { title: "👥 Socios / Responsables", value: `${totalSocios}`, cls: "stat-blue" },
+    { title: "📥 Ingresos Totales Periodo", value: formatMoney(totalIngresos), cls: "stat-green" },
+    { title: "📤 Gastos Totales Periodo", value: formatMoney(totalGastos), cls: "stat-red" },
+    { title: "💰 Saldos Cajas (Ing - Gast)", value: formatMoney(totalSaldos), cls: totalSaldos >= 0 ? "stat-purple" : "stat-orange" },
+  ];
+  els.cajasGlobalCards.innerHTML = cards.map(c =>
+    `<div class="stat-card ${c.cls}"><h3>${c.title}</h3><p class="stat-value">${c.value}</p></div>`
+  ).join("");
+}
+function renderCajasSaldosTable() {
+  if (!isAdmin() || !els.cajasSaldosTable) return;
+  const d = state.cajasData?.saldos || [];
+  const tbody = els.cajasSaldosTable.querySelector("tbody");
+  if (!tbody) return;
+  if (d.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">No hay trabajadores dados de alta</td></tr>`;
+    return;
+  }
+  const selId = state.filtros.cajas.selectedTrabajadorId;
+  tbody.innerHTML = d.map((r) => {
+    const isSel = selId === r.trabajadorId ? "selected" : "";
+    const rolBadge = r.rol === "admin" ? `<span class="role-badge admin" style="margin:0">👑 Socio</span>` : `<span class="role-badge worker" style="margin:0">👷 Trab.</span>`;
+    const saldoCls = (r.saldo || 0) >= 0 ? "text-green" : "text-red";
+    return `<tr data-trabajador="${r.trabajadorId}" class="${isSel}" style="cursor:pointer">
+      <td><strong>${escapeHtml(r.nombre)}</strong></td>
+      <td>${rolBadge}</td>
+      <td class="text-green">${formatMoney(r.ingresos || 0)}</td>
+      <td class="text-red">${formatMoney(r.gastos || 0)}</td>
+      <td class="${saldoCls}"><strong>${formatMoney(r.saldo || 0)}</strong></td>
+      <td class="text-muted">${r.numMov || 0}</td>
+    </tr>`;
+  }).join("");
+  tbody.querySelectorAll("tr[data-trabajador]").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const tid = tr.dataset.trabajador;
+      state.filtros.cajas.selectedTrabajadorId = state.filtros.cajas.selectedTrabajadorId === tid ? null : tid;
+      if (els.cajasSelectedInfo) {
+        if (state.filtros.cajas.selectedTrabajadorId) {
+          const t = getTrabajadorById(state.filtros.cajas.selectedTrabajadorId);
+          els.cajasSelectedInfo.textContent = `🔍 Filtrando movimientos de: ${t?.nombre || "?"}. Pulsa otra vez para quitar filtro.`;
+        } else {
+          els.cajasSelectedInfo.textContent = "Pulsa una fila para ver los movimientos de esa caja";
+        }
+      }
+      renderCajasMovimientos();
+      renderCajasSaldosTable();
+    });
+  });
+}
+function renderCajasMovimientos() {
+  if (!isAdmin() || !els.cajasMovimientosList || !els.cajasMovTitle) return;
+  let movs = [...state.movimientos];
+  const { desde, hasta, selectedTrabajadorId } = state.filtros.cajas;
+  if (desde) movs = movs.filter((m) => m.fecha >= desde);
+  if (hasta) movs = movs.filter((m) => m.fecha <= hasta);
+  if (selectedTrabajadorId) {
+    movs = movs.filter((m) => m.responsableId === selectedTrabajadorId);
+    const t = getTrabajadorById(selectedTrabajadorId);
+    els.cajasMovTitle.textContent = `🧾 Movimientos de la caja de: ${t?.nombre || "?"} (${movs.length})`;
+  } else {
+    els.cajasMovTitle.textContent = `🧾 Últimos Movimientos (todas las cajas, ${movs.length})`;
+  }
+  movs = movs.sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "") || (b.createdAt || "").localeCompare(a.createdAt || ""));
+  if (movs.length === 0) {
+    els.cajasMovimientosList.innerHTML = `<li class="empty">No hay movimientos en este periodo</li>`;
+    return;
+  }
+  els.cajasMovimientosList.innerHTML = movs.slice(0, 100).map((m) => {
+    const ob = getObraById(m.obraId);
+    const resp = m.responsableId ? getTrabajadorById(m.responsableId) : null;
+    const isIng = m.tipo === "ingreso";
+    const sign = isIng ? "+" : "-";
+    const colorCls = isIng ? "text-green" : "text-red";
+    const icon = isIng ? "📥" : "📤";
+    return `<li class="list-item">
+      <div>
+        <strong class="${colorCls}">${icon} ${sign}${formatMoney(Number(m.importe) || 0)}</strong>
+        <div class="text-muted small">${formatDate(m.fecha)} · ${CATEGORIAS_MOV[m.categoria] || m.categoria || "Sin categ."} ${resp ? ` · 💵 ${escapeHtml(resp.nombre)}` : ""}</div>
+        <div>${escapeHtml(m.concepto || "")} ${ob ? `<span class="text-muted small"> · 🏗️ ${escapeHtml(ob.nombre)}</span>` : ""}</div>
+      </div>
+    </li>`;
+  }).join("");
+}
+async function renderCajas() {
+  if (!isAdmin()) return;
+  if (!state.cajasData) { try { await loadCajasData(); } catch (e) { /* ignore */ } }
+  renderCajasGlobalCards();
+  renderCajasSaldosTable();
+  renderCajasMovimientos();
+}
+async function refreshCajasFull() {
+  try {
+    state.cajasData = null;
+    await loadAllData(true, true);
+    await loadCajasData();
+    renderCajas();
+  } catch (e) { console.warn(e); }
+}
+function bindCajasEvents() {
+  if (!els.cajasDesde) return;
+  const setFiltrosUI = () => {
+    state.filtros.cajas.desde = els.cajasDesde.value || null;
+    state.filtros.cajas.hasta = els.cajasHasta.value || null;
+  };
+  els.cajasDesde.addEventListener("change", () => { setFiltrosUI(); refreshCajasFull(); });
+  els.cajasHasta.addEventListener("change", () => { setFiltrosUI(); refreshCajasFull(); });
+  els.btnCajasMesActual.addEventListener("click", () => {
+    const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, "0");
+    els.cajasDesde.value = `${y}-${m}-01`; const ld = new Date(y, d.getMonth() + 1, 0);
+    els.cajasHasta.value = `${y}-${m}-${String(ld.getDate()).padStart(2, "0")}`;
+    setFiltrosUI(); refreshCajasFull();
+  });
+  els.btnCajasTodo.addEventListener("click", () => {
+    els.cajasDesde.value = ""; els.cajasHasta.value = "";
+    state.filtros.cajas.desde = null; state.filtros.cajas.hasta = null;
+    state.filtros.cajas.selectedTrabajadorId = null;
+    if (els.cajasSelectedInfo) els.cajasSelectedInfo.textContent = "Pulsa una fila para ver los movimientos de esa caja";
+    refreshCajasFull();
+  });
+  els.btnCajasRefresh.addEventListener("click", () => refreshCajasFull());
 }
 
 async function init() {
@@ -1943,6 +2119,7 @@ async function init() {
   bindAjustesEvents();
   bindQuickNewObraEvents();
   bindQuickMovEvents();
+  bindCajasEvents();
   setDefaults();
 
   const ok = await loadAllData();

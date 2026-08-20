@@ -356,7 +356,8 @@ app.post("/api/movimientos", authMiddleware, requireAdmin, async (req, res) => {
   try {
     await insertMov({
       id, fecha: data.fecha, tipo: data.tipo, importe: Number(data.importe),
-      obraId: data.obraId || null, categoria: data.categoria || "", formaPago: data.formaPago || "otro",
+      obraId: data.obraId || null, responsableId: data.responsableId || null,
+      categoria: data.categoria || "", formaPago: data.formaPago || "otro",
       concepto: data.concepto, referencia: data.referencia || "",
       createdAt: data.createdAt || new Date().toISOString(),
     });
@@ -372,8 +373,8 @@ app.put("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res) =
   const data = req.body || {};
   const merged = { ...normalizeMov(m), ...data, id };
   await dbRun(
-    `UPDATE movimientos SET fecha = ?, tipo = ?, importe = ?, obraId = ?, categoria = ?, formaPago = ?, concepto = ?, referencia = ? WHERE id = ?`,
-    [merged.fecha, merged.tipo, Number(merged.importe) || 0, merged.obraId || null,
+    `UPDATE movimientos SET fecha = ?, tipo = ?, importe = ?, obraId = ?, responsableId = ?, categoria = ?, formaPago = ?, concepto = ?, referencia = ? WHERE id = ?`,
+    [merged.fecha, merged.tipo, Number(merged.importe) || 0, merged.obraId || null, merged.responsableId || null,
       merged.categoria || "", merged.formaPago || "otro", merged.concepto, merged.referencia || "", id]
   );
   res.json(normalizeMov(await dbGet("SELECT * FROM movimientos WHERE id = ?", [id])));
@@ -381,6 +382,36 @@ app.put("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res) =
 app.delete("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res) => {
   await dbRun("DELETE FROM movimientos WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
+});
+
+/* =============== CAJAS / SALDOS POR TRABAJADOR =============== */
+app.get("/api/cajas", authMiddleware, requireAdmin, async (req, res) => {
+  const { desde, hasta } = req.query || {};
+  let where = ""; const params = [];
+  if (desde) { where += " AND m.fecha >= ?"; params.push(desde); }
+  if (hasta) { where += " AND m.fecha <= ?"; params.push(hasta); }
+  const rows = await dbAll(`
+    SELECT
+      t.id AS trabajadorId, t.nombre, t.rol,
+      SUM(CASE WHEN m.tipo = 'ingreso' THEN m.importe ELSE 0 END) AS ingresos,
+      SUM(CASE WHEN m.tipo = 'gasto' THEN m.importe ELSE 0 END) AS gastos,
+      COUNT(m.id) AS numMov
+    FROM trabajadores t
+    LEFT JOIN movimientos m ON m.responsableId = t.id ${where ? "AND 1=1 " + where : ""}
+    WHERE t.activo = 1
+    GROUP BY t.id
+    ORDER BY t.rol DESC, t.nombre ASC
+  `, params);
+  const saldos = rows.map((r) => ({
+    trabajadorId: r.trabajadorId,
+    nombre: r.nombre,
+    rol: r.rol || "trabajador",
+    ingresos: Number(r.ingresos) || 0,
+    gastos: Number(r.gastos) || 0,
+    saldo: (Number(r.ingresos) || 0) - (Number(r.gastos) || 0),
+    numMov: Number(r.numMov) || 0,
+  }));
+  res.json({ saldos, params: { desde, hasta } });
 });
 
 /* =============== FALLBACK SPA =============== */
@@ -423,8 +454,8 @@ async function insertHora(h) {
 }
 async function insertMov(m) {
   return dbRun(
-    `INSERT INTO movimientos (id, fecha, tipo, importe, obraId, categoria, formaPago, concepto, referencia, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [m.id, m.fecha, m.tipo, Number(m.importe) || 0, m.obraId || null, m.categoria || "",
+    `INSERT INTO movimientos (id, fecha, tipo, importe, obraId, responsableId, categoria, formaPago, concepto, referencia, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [m.id, m.fecha, m.tipo, Number(m.importe) || 0, m.obraId || null, m.responsableId || null, m.categoria || "",
       m.formaPago || "otro", m.concepto, m.referencia || "", m.createdAt || new Date().toISOString()]
   );
 }
@@ -547,24 +578,29 @@ async function initDatabase() {
       tipo TEXT NOT NULL CHECK (tipo IN ('ingreso','gasto')),
       importe REAL NOT NULL DEFAULT 0,
       obraId TEXT,
+      responsableId TEXT,
       categoria TEXT DEFAULT '',
       formaPago TEXT DEFAULT 'otro',
       concepto TEXT NOT NULL,
       referencia TEXT DEFAULT '',
       createdAt TEXT NOT NULL,
-      FOREIGN KEY (obraId) REFERENCES obras(id) ON DELETE SET NULL
+      FOREIGN KEY (obraId) REFERENCES obras(id) ON DELETE SET NULL,
+      FOREIGN KEY (responsableId) REFERENCES trabajadores(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_horas_trabajador_fecha ON horas (trabajadorId, fecha);
     CREATE INDEX IF NOT EXISTS idx_horas_obra ON horas (obraId);
     CREATE INDEX IF NOT EXISTS idx_movimientos_fecha ON movimientos (fecha);
     CREATE INDEX IF NOT EXISTS idx_movimientos_obra ON movimientos (obraId);
+    CREATE INDEX IF NOT EXISTS idx_movimientos_responsable ON movimientos (responsableId);
   `;
-  // sqlite3/driver no soporta multi-statement .exec de forma segura, así que dividimos
   const stmts = sql.split(";").map(s => s.trim()).filter(Boolean);
   for (const s of stmts) {
-    await dbRun(s + ";");
+    try { await dbRun(s + ";"); } catch (e) { /* ignoramos errores por tablas ya existentes */ }
   }
+  // Añadir columnas nuevas si la tabla era anterior (sin ellas)
+  try { await dbRun("ALTER TABLE movimientos ADD COLUMN responsableId TEXT;").catch(() => {}); } catch {}
+  try { await dbRun("ALTER TABLE movimientos ADD FOREIGN KEY (responsableId) REFERENCES trabajadores(id) ON DELETE SET NULL;").catch(() => {}); } catch {}
 }
 async function seedInitialData() {
   const pinRow = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);

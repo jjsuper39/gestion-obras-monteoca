@@ -61,6 +61,7 @@
       <button class="tab-btn" data-tab="obras" data-role="admin">🏢 Obras</button>
       <button class="tab-btn" data-tab="horas" data-role="both">⏱️ Mis Horas</button>
       <button class="tab-btn" data-tab="contabilidad" data-role="admin">💰 Contabilidad</button>
+      <button class="tab-btn" data-tab="cajas" data-role="admin">💵 Cajas / Saldos Socios</button>
       <button class="tab-btn" data-tab="cierre" data-role="admin">📅 Cierre de Mes</button>
       <button class="tab-btn" data-tab="ajustes" data-role="admin">⚙️ Ajustes</button>
     </nav>
@@ -433,6 +434,12 @@
               </select>
             </div>
             <div>
+              <label for="movimientoResponsable">💵 Responsable / Caja Socio</label>
+              <select id="movimientoResponsable">
+                <option value="">Sin asignar (general)</option>
+              </select>
+            </div>
+            <div>
               <label for="movimientoCategoria">Categoría *</label>
               <select id="movimientoCategoria" required>
                 <optgroup label="Ingresos">
@@ -520,6 +527,61 @@
           </div>
         </div>
         <ul id="listaMovimientos" class="list"></ul>
+      </div>
+    </section>
+
+    <section id="tab-cajas" class="tab-content" data-role="admin">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>💵 Cajas y Saldos por Trabajador / Socio</h2>
+          <p class="hint">Cada socio tiene su propia caja. Ingresos suman, gastos restan. El saldo = Ingresos - Gastos del periodo seleccionado.</p>
+        </div>
+        <div class="filters-grid cajas-filters">
+          <div>
+            <label for="cajasDesde">📅 Desde</label>
+            <input type="date" id="cajasDesde" />
+          </div>
+          <div>
+            <label for="cajasHasta">📅 Hasta</label>
+            <input type="date" id="cajasHasta" />
+          </div>
+          <div class="actions">
+            <button type="button" class="btn ghost" id="btnCajasMesActual">📅 Este Mes</button>
+            <button type="button" class="btn ghost" id="btnCajasTodo">🗓️ TODO</button>
+            <button type="button" class="btn primary" id="btnCajasRefresh">🔄 Actualizar</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-grid" id="cajasGlobalCards" style="margin-bottom:1rem"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>📋 Saldos por Trabajador / Socio</h3>
+          <p class="hint" id="cajasSelectedInfo">Pulsa una fila para ver los movimientos de esa caja</p>
+        </div>
+        <div class="table-responsive">
+          <table class="table" id="cajasSaldosTable">
+            <thead>
+              <tr>
+                <th>👷 Nombre</th>
+                <th>🎖️ Rol</th>
+                <th>📥 Ingresos Periodo</th>
+                <th>📤 Gastos Periodo</th>
+                <th>💰 Saldo Actual Caja</th>
+                <th>🧾 Nº Movimientos</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3 id="cajasMovTitle">🧾 Últimos Movimientos (todas las cajas)</h3>
+        </div>
+        <ul id="cajasMovimientosList" class="list movimientos-list"></ul>
       </div>
     </section>
 
@@ -645,6 +707,12 @@
         <div>
           <label for="qmImporte">Importe (€) *</label>
           <input id="qmImporte" type="number" step="0.01" min="0.01" required placeholder="Ej: 1500" />
+        </div>
+        <div>
+          <label for="qmResponsable">💵 Responsable / Caja</label>
+          <select id="qmResponsable">
+            <option value="">Sin asignar (general)</option>
+          </select>
         </div>
         <div>
           <label for="qmCategoria">Categoría *</label>
