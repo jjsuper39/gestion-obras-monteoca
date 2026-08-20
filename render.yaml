@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: gestion-obras-monteoca
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_VERSION
+        value: 20.11.0
+    disk:
+      name: sqlite-data
+      mountPath: /app/data
+      sizeGB: 1

@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gestión de Obras - Horas y Contabilidad</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <div class="login-logo">🏗️</div>
+      <h1>Gestión de Obras</h1>
+      <p class="login-subtitle">Control de horas y rentabilidad</p>
+
+      <div class="role-tabs">
+        <button class="role-tab active" data-role="trabajador">👷 Soy Trabajador</button>
+        <button class="role-tab" data-role="admin">👑 Administración</button>
+      </div>
+
+      <div id="loginTrabajadorForm" class="login-form">
+        <label for="loginTrabajadorSelect">Selecciona tu nombre</label>
+        <select id="loginTrabajadorSelect">
+          <option value="">-- Elige tu nombre --</option>
+        </select>
+        <label for="loginPinTrabajador">Tu PIN de acceso</label>
+        <input id="loginPinTrabajador" type="password" inputmode="numeric" maxlength="6" placeholder="Introduce tu PIN" />
+        <button class="btn primary big-btn" id="btnLoginTrabajador">🔓 Entrar</button>
+        <p class="login-hint">Tu administrador te habrá dado tu PIN personal.</p>
+      </div>
+
+      <div id="loginAdminForm" class="login-form hidden">
+        <label for="loginPinAdmin">PIN de Administrador</label>
+        <input id="loginPinAdmin" type="password" inputmode="numeric" maxlength="10" placeholder="Introduce PIN admin" />
+        <button class="btn primary big-btn" id="btnLoginAdmin">🔓 Entrar como Admin</button>
+        <p class="login-hint">PIN por defecto: <strong>1234</strong> (cámbialo en Ajustes)</p>
+      </div>
+
+      <p id="loginError" class="status error" style="text-align:center;margin-top:.8rem;"></p>
+    </div>
+  </div>
+
+  <main id="appMain" class="app hidden">
+    <header class="topbar">
+      <div class="topbar-row">
+        <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;">
+          <h1 id="appTitle">🏗️ Gestión de Obras</h1>
+          <span id="roleBadge" class="role-badge"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;">
+          <span id="userBadge" class="user-badge"></span>
+          <button class="btn small ghost" id="btnLogout">🚪 Salir</button>
+        </div>
+      </div>
+      <p id="appSubtitle">Control de horas trabajadores, contabilidad y rentabilidad por obra</p>
+    </header>
+
+    <nav class="nav-tabs" id="navTabs">
+      <button class="tab-btn active" data-tab="dashboard" data-role="admin">📊 Dashboard</button>
+      <button class="tab-btn" data-tab="trabajadores" data-role="admin">👷 Trabajadores</button>
+      <button class="tab-btn" data-tab="obras" data-role="admin">🏢 Obras</button>
+      <button class="tab-btn" data-tab="horas" data-role="both">⏱️ Mis Horas</button>
+      <button class="tab-btn" data-tab="contabilidad" data-role="admin">💰 Contabilidad</button>
+      <button class="tab-btn" data-tab="cierre" data-role="admin">📅 Cierre de Mes</button>
+      <button class="tab-btn" data-tab="ajustes" data-role="admin">⚙️ Ajustes</button>
+    </nav>
+
+    <section id="tab-dashboard" class="tab-content active" data-role="admin">
+      <div class="dashboard-grid">
+        <div class="stat-card stat-blue">
+          <h3>Trabajadores Activos</h3>
+          <p class="stat-value" id="dashTrabajadores">0</p>
+        </div>
+        <div class="stat-card stat-green">
+          <h3>Obras en Curso</h3>
+          <p class="stat-value" id="dashObras">0</p>
+        </div>
+        <div class="stat-card stat-orange">
+          <h3>Horas Mes Actual</h3>
+          <p class="stat-value" id="dashHorasMes">0h</p>
+        </div>
+        <div class="stat-card stat-purple">
+          <h3>Beneficio Neto Mes</h3>
+          <p class="stat-value" id="dashBeneficio">0€</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Resumen de Obras</h2>
+        </div>
+        <div id="dashboardObrasList" class="list"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Últimos Movimientos</h2>
+        </div>
+        <ul id="dashboardMovimientos" class="list"></ul>
+      </div>
+    </section>
+
+    <section id="tab-trabajadores" class="tab-content" data-role="admin">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>👷 Trabajadores</h2>
+        </div>
+        <form id="trabajadorForm">
+          <input type="hidden" id="trabajadorId" />
+          <div class="form-grid">
+            <div>
+              <label for="trabajadorNombre">Nombre Completo *</label>
+              <input id="trabajadorNombre" type="text" required placeholder="Ej: Juan Pérez" />
+            </div>
+            <div>
+              <label for="trabajadorPin">PIN de Acceso (4-6 dígitos) *</label>
+              <input id="trabajadorPin" type="text" inputmode="numeric" maxlength="6" required placeholder="Ej: 2580" />
+            </div>
+            <div>
+              <label for="trabajadorRol">Rol de Usuario *</label>
+              <select id="trabajadorRol" required>
+                <option value="trabajador">👷 Trabajador (solo sus horas)</option>
+                <option value="admin">👑 Administrador (ver y editar TODO)</option>
+              </select>
+            </div>
+            <div>
+              <label for="trabajadorDni">DNI/NIE</label>
+              <input id="trabajadorDni" type="text" placeholder="Ej: 12345678Z" />
+            </div>
+            <div>
+              <label for="trabajadorTelefono">Teléfono</label>
+              <input id="trabajadorTelefono" type="tel" placeholder="Ej: 600111222" />
+            </div>
+            <div>
+              <label for="trabajadorTarifa">Tarifa Base 8h (€/h) *</label>
+              <input id="trabajadorTarifa" type="number" step="0.01" min="0" required placeholder="Ej: 15.50" />
+            </div>
+            <div>
+              <label for="trabajadorTarifaExtra">Tarifa Horas Extra (€/h) *</label>
+              <input id="trabajadorTarifaExtra" type="number" step="0.01" min="0" required placeholder="Ej: 22.00" />
+            </div>
+            <div>
+              <label for="trabajadorCategoria">Categoría/Puesto</label>
+              <input id="trabajadorCategoria" type="text" placeholder="Ej: Oficial 1ª, Albañil..." />
+            </div>
+            <div>
+              <label for="trabajadorActivo">Estado</label>
+              <select id="trabajadorActivo">
+                <option value="true">✅ Activo</option>
+                <option value="false">❌ Inactivo</option>
+              </select>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn primary" id="btnGuardarTrabajador">💾 Guardar Trabajador</button>
+            <button type="button" class="btn ghost" id="btnLimpiarTrabajador">🔄 Limpiar</button>
+          </div>
+          <p id="trabajadorStatus" class="status"></p>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Listado de Trabajadores</h2>
+          <div class="actions compact">
+            <input type="search" id="buscarTrabajador" placeholder="🔍 Buscar trabajador..." style="width: 240px;" />
+          </div>
+        </div>
+        <ul id="listaTrabajadores" class="list"></ul>
+      </div>
+    </section>
+
+    <section id="tab-obras" class="tab-content" data-role="admin">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>🏢 Obras</h2>
+        </div>
+        <form id="obraForm">
+          <input type="hidden" id="obraId" />
+          <div class="form-grid">
+            <div>
+              <label for="obraNombre">Nombre de la Obra *</label>
+              <input id="obraNombre" type="text" required placeholder="Ej: Reforma piso Calle Mayor 12" />
+            </div>
+            <div>
+              <label for="obraCliente">Cliente *</label>
+              <input id="obraCliente" type="text" required placeholder="Ej: Inmobiliaria García SL" />
+            </div>
+            <div>
+              <label for="obraDireccion">Dirección</label>
+              <input id="obraDireccion" type="text" placeholder="Ej: Calle Mayor 12, Madrid" />
+            </div>
+            <div>
+              <label for="obraPresupuesto">Presupuesto Total (€)</label>
+              <input id="obraPresupuesto" type="number" step="0.01" min="0" placeholder="Ej: 25000" />
+            </div>
+            <div>
+              <label for="obraFechaInicio">Fecha Inicio</label>
+              <input id="obraFechaInicio" type="date" />
+            </div>
+            <div>
+              <label for="obraFechaFin">Fecha Fin Estimada</label>
+              <input id="obraFechaFin" type="date" />
+            </div>
+            <div>
+              <label for="obraEstado">Estado</label>
+              <select id="obraEstado">
+                <option value="pendiente">📝 Pendiente</option>
+                <option value="curso" selected>🔨 En Curso</option>
+                <option value="finalizada">✅ Finalizada</option>
+                <option value="cancelada">❌ Cancelada</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label for="obraNotas">Notas / Descripción</label>
+            <textarea id="obraNotas" rows="2" placeholder="Detalles adicionales..."></textarea>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn primary" id="btnGuardarObra">💾 Guardar Obra</button>
+            <button type="button" class="btn ghost" id="btnLimpiarObra">🔄 Limpiar</button>
+          </div>
+          <p id="obraStatus" class="status"></p>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Listado de Obras</h2>
+          <div class="actions compact">
+            <input type="search" id="buscarObra" placeholder="🔍 Buscar obra..." style="width: 240px;" />
+            <select id="filtroEstadoObra" style="width: 160px;">
+              <option value="todos">Todos los estados</option>
+              <option value="pendiente">📝 Pendiente</option>
+              <option value="curso">🔨 En Curso</option>
+              <option value="finalizada">✅ Finalizada</option>
+              <option value="cancelada">❌ Cancelada</option>
+            </select>
+          </div>
+        </div>
+        <ul id="listaObras" class="list"></ul>
+      </div>
+    </section>
+
+    <section id="tab-horas" class="tab-content" data-role="both">
+      <div id="workerQuickHours" class="panel worker-quick-panel hidden">
+        <div class="panel-head">
+          <h2 style="font-size:1.4rem;">✅ Registrar mis horas de hoy</h2>
+          <span class="today-label" id="todayLabel"></span>
+        </div>
+
+        <p class="hint" style="margin:0 0 1rem;">Solo necesitas 3 toques. Las <strong>primeras 8h</strong> van a tarifa base, el resto a tarifa extra automáticamente.</p>
+
+        <form id="quickHorasForm">
+          <input type="hidden" id="quickFecha" />
+          <input type="hidden" id="quickTrabajadorId" />
+
+          <label for="quickObra" style="margin-top:0;">🏢 ¿En qué obra has trabajado hoy? *</label>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+            <select id="quickObra" required style="font-size:1.1rem;padding:.8rem;flex:1;min-width:240px;">
+              <option value="">-- Selecciona la obra --</option>
+            </select>
+            <button type="button" class="btn primary worker-only" id="btnQuickNewObra" style="white-space:nowrap;padding:.8rem 1rem;font-weight:700;">
+              ➕ Obra nueva
+            </button>
+          </div>
+
+          <label>⏱️ ¿Cuántas horas has hecho hoy?</label>
+          <div class="quick-hours-buttons">
+            <button type="button" class="quick-h-btn" data-h="4">4h</button>
+            <button type="button" class="quick-h-btn" data-h="6">6h</button>
+            <button type="button" class="quick-h-btn primary" data-h="8">8h (normal)</button>
+            <button type="button" class="quick-h-btn extra" data-h="9">9h (+1 extra)</button>
+            <button type="button" class="quick-h-btn extra" data-h="10">10h (+2 extra)</button>
+            <button type="button" class="quick-h-btn extra" data-h="12">12h (+4 extra)</button>
+            <button type="button" class="quick-h-btn" data-h="custom">⚙️ Otra cantidad</button>
+          </div>
+          <input type="number" id="quickHoras" step="0.25" min="0.25" max="24" placeholder="O escribe aquí las horas..." style="margin-top:.8rem;" />
+
+          <div id="quickPreview" class="quick-preview hidden">
+            <div class="qp-row" id="qpAcumuladoRow" style="font-weight:700;padding-bottom:.4rem;border-bottom:1px dashed var(--border);color:var(--primary-strong);">
+              <span>📊 Horas ya registradas hoy:</span>
+              <strong id="qpAcumulado">0h</strong>
+            </div>
+            <div class="qp-row">
+              <span>Horas base (hasta 8h):</span>
+              <strong id="qpBase">0h × €0 = €0</strong>
+            </div>
+            <div class="qp-row qp-extra">
+              <span>Horas extra:</span>
+              <strong id="qpExtra">0h × €0 = €0</strong>
+            </div>
+            <div class="qp-row qp-total">
+              <span>Total a cobrar con ESTE registro:</span>
+              <strong id="qpTotal">€0</strong>
+            </div>
+          </div>
+
+          <label for="quickNotas">📝 Notas (opcional): ¿Qué tareas has hecho?</label>
+          <textarea id="quickNotas" rows="2" placeholder="Ej: Colocación de baldosas en salón, montaje armario cocina..."></textarea>
+
+          <div class="actions" style="margin-top:1.2rem;">
+            <button type="submit" class="btn primary big-btn" style="width:100%;padding:1rem;font-size:1.1rem;">
+              💾 GUARDAR Y FINALIZAR DÍA
+            </button>
+          </div>
+          <p id="quickStatus" class="status" style="text-align:center;font-size:1rem;"></p>
+        </form>
+      </div>
+
+      <div id="workerMyData" class="panel worker-summary-panel hidden">
+        <div class="panel-head">
+          <h2>📊 Mis estadísticas</h2>
+        </div>
+        <div class="dashboard-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
+          <div class="stat-card stat-blue" style="padding:.9rem;">
+            <h3 style="font-size:.85rem;">📅 Hoy</h3>
+            <p class="stat-value" style="font-size:1.4rem;" id="wsHoy">0h</p>
+          </div>
+          <div class="stat-card stat-green" style="padding:.9rem;">
+            <h3 style="font-size:.85rem;">📆 Esta Semana</h3>
+            <p class="stat-value" style="font-size:1.4rem;" id="wsSemana">0h</p>
+          </div>
+          <div class="stat-card stat-orange" style="padding:.9rem;">
+            <h3 style="font-size:.85rem;">🗓️ Este Mes</h3>
+            <p class="stat-value" style="font-size:1.4rem;" id="wsMes">0h</p>
+          </div>
+          <div class="stat-card stat-purple" style="padding:.9rem;">
+            <h3 style="font-size:.85rem;">💰 A cobrar mes</h3>
+            <p class="stat-value" style="font-size:1.4rem;" id="wsDinero">€0</p>
+          </div>
+        </div>
+        <div class="summary-row" style="margin-top:1rem;">
+          <span class="summary-chip">Hora base: <strong id="wsTarifaBase">€0</strong>/h</span>
+          <span class="summary-chip">Hora extra: <strong id="wsTarifaExtra">€0</strong>/h</span>
+          <span class="summary-chip">Horas extra mes: <strong id="wsExtrasMes">0h</strong></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2 id="historialHorasTitle">📜 Historial de Horas</h2>
+          <div class="actions compact">
+            <input type="date" id="filtroHorasDesde" title="Fecha desde" />
+            <input type="date" id="filtroHorasHasta" title="Fecha hasta" />
+            <select id="filtroHorasTrabajador" class="admin-only" style="width: 180px;">
+              <option value="todos">Todos los trabajadores</option>
+            </select>
+            <select id="filtroHorasObra" style="width: 180px;">
+              <option value="todas">Todas las obras</option>
+            </select>
+            <button class="btn small primary" id="btnAplicarFiltrosHoras">🔍 Filtrar</button>
+            <button class="btn small" id="btnLimpiarFiltrosHoras">✖ Limpiar</button>
+          </div>
+        </div>
+        <div class="summary-row">
+          <span class="summary-chip"><strong>Total Horas:</strong> <span id="totalHorasFiltradas">0h</span></span>
+          <span class="summary-chip admin-only"><strong>Coste Total:</strong> <span id="totalCosteHoras">0€</span></span>
+          <span class="summary-chip worker-only"><strong>Total a cobrar:</strong> <span id="workerTotalCobrar">0€</span></span>
+          <span class="summary-chip"><strong>Registros:</strong> <span id="totalRegistrosHoras">0</span></span>
+        </div>
+        <ul id="listaHoras" class="list"></ul>
+      </div>
+
+      <div id="adminHoursForm" class="panel hidden">
+        <div class="panel-head">
+          <h2>⏱️ Registrar Horas (Admin)</h2>
+        </div>
+        <form id="horasForm">
+          <input type="hidden" id="horaId" />
+          <div class="form-grid">
+            <div>
+              <label for="horaFecha">Fecha *</label>
+              <input id="horaFecha" type="date" required />
+            </div>
+            <div>
+              <label for="horaTrabajador">Trabajador *</label>
+              <select id="horaTrabajador" required>
+                <option value="">Selecciona trabajador...</option>
+              </select>
+            </div>
+            <div>
+              <label for="horaObra">Obra *</label>
+              <select id="horaObra" required>
+                <option value="">Selecciona obra...</option>
+              </select>
+            </div>
+            <div>
+              <label for="horaCantidad">Horas Trabajadas *</label>
+              <input id="horaCantidad" type="number" step="0.25" min="0.25" max="24" required placeholder="Ej: 8" />
+            </div>
+          </div>
+          <div>
+            <label for="horaNotas">Notas</label>
+            <textarea id="horaNotas" rows="2" placeholder="Tareas realizadas, incidencias..."></textarea>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn primary" id="btnGuardarHora">💾 Guardar Registro</button>
+            <button type="button" class="btn ghost" id="btnLimpiarHora">🔄 Limpiar</button>
+          </div>
+          <p id="horaStatus" class="status"></p>
+        </form>
+      </div>
+    </section>
+
+    <section id="tab-contabilidad" class="tab-content" data-role="admin">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>💰 Nuevo Movimiento</h2>
+        </div>
+        <form id="movimientoForm">
+          <input type="hidden" id="movimientoId" />
+          <div class="form-grid">
+            <div>
+              <label for="movimientoFecha">Fecha *</label>
+              <input id="movimientoFecha" type="date" required />
+            </div>
+            <div>
+              <label for="movimientoTipo">Tipo *</label>
+              <select id="movimientoTipo" required>
+                <option value="ingreso">📥 Ingreso (Entrada)</option>
+                <option value="gasto">📤 Gasto (Salida)</option>
+              </select>
+            </div>
+            <div>
+              <label for="movimientoImporte">Importe (€) *</label>
+              <input id="movimientoImporte" type="number" step="0.01" min="0.01" required placeholder="Ej: 1500.00" />
+            </div>
+            <div>
+              <label for="movimientoObra">Relacionado con Obra</label>
+              <select id="movimientoObra">
+                <option value="">General (sin obra)</option>
+              </select>
+            </div>
+            <div>
+              <label for="movimientoCategoria">Categoría *</label>
+              <select id="movimientoCategoria" required>
+                <optgroup label="Ingresos">
+                  <option value="facturacion">Facturación Cliente</option>
+                  <option value="anticipo">Anticipo Cliente</option>
+                  <option value="subvencion">Subvención / Ayuda</option>
+                  <option value="otro_ingreso">Otro Ingreso</option>
+                </optgroup>
+                <optgroup label="Gastos">
+                  <option value="materiales">Materiales de Construcción</option>
+                  <option value="proveedores">Proveedores / Subcontratas</option>
+                  <option value="transporte">Transporte / Desplazamiento</option>
+                  <option value="alquiler">Alquiler Maquinaria</option>
+                  <option value="seguros">Seguros</option>
+                  <option value="impuestos">Impuestos / Tasas</option>
+                  <option value="oficina">Gastos de Oficina</option>
+                  <option value="nomina_general">Nómina / Sueldos (no imputados)</option>
+                  <option value="otro_gasto">Otro Gasto</option>
+                </optgroup>
+              </select>
+            </div>
+            <div>
+              <label for="movimientoFormaPago">Forma de Pago</label>
+              <select id="movimientoFormaPago">
+                <option value="transferencia">Transferencia Bancaria</option>
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="cheque">Cheque</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label for="movimientoConcepto">Concepto / Descripción *</label>
+            <input id="movimientoConcepto" type="text" required placeholder="Ej: Cemento 20 sacos - Obra Calle Mayor" />
+          </div>
+          <div>
+            <label for="movimientoReferencia">Referencia / Factura Nº</label>
+            <input id="movimientoReferencia" type="text" placeholder="Nº factura, albarán, etc." />
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn primary" id="btnGuardarMovimiento">💾 Guardar Movimiento</button>
+            <button type="button" class="btn ghost" id="btnLimpiarMovimiento">🔄 Limpiar</button>
+          </div>
+          <p id="movimientoStatus" class="status"></p>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Balance General</h2>
+        </div>
+        <div class="balance-grid">
+          <div class="balance-card income">
+            <h4>📥 Total Ingresos</h4>
+            <p class="balance-value" id="totalIngresos">0,00 €</p>
+          </div>
+          <div class="balance-card expense">
+            <h4>📤 Total Gastos</h4>
+            <p class="balance-value" id="totalGastos">0,00 €</p>
+          </div>
+          <div class="balance-card net">
+            <h4>💵 Balance Neto</h4>
+            <p class="balance-value" id="balanceNeto">0,00 €</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Historial de Movimientos</h2>
+          <div class="actions compact">
+            <input type="date" id="filtroMovDesde" title="Fecha desde" />
+            <input type="date" id="filtroMovHasta" title="Fecha hasta" />
+            <select id="filtroMovTipo" style="width: 140px;">
+              <option value="todos">Todos</option>
+              <option value="ingreso">Sólo Ingresos</option>
+              <option value="gasto">Sólo Gastos</option>
+            </select>
+            <select id="filtroMovObra" style="width: 200px;">
+              <option value="todas">Todas / General</option>
+            </select>
+            <button class="btn small primary" id="btnAplicarFiltrosMov">🔍 Filtrar</button>
+            <button class="btn small" id="btnLimpiarFiltrosMov">✖ Limpiar</button>
+          </div>
+        </div>
+        <ul id="listaMovimientos" class="list"></ul>
+      </div>
+    </section>
+
+    <section id="tab-cierre" class="tab-content" data-role="admin">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>📅 Cierre de Mes</h2>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label for="cierreMes">Selecciona Mes y Año</label>
+            <input id="cierreMes" type="month" />
+          </div>
+          <div style="display: flex; align-items: flex-end;">
+            <button class="btn primary" id="btnCalcularCierre" style="width: 100%;">🔄 Calcular Cierre</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>👷 Liquidación de Trabajadores</h2>
+          <button class="btn small primary" id="btnExportarSueldos">📥 Exportar CSV</button>
+        </div>
+        <div id="cierreTrabajadores" class="cierre-trabajadores-wrapper"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>🏢 Rentabilidad por Obra</h2>
+        </div>
+        <div id="cierreObras" class="cierre-obras-wrapper"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>📊 Resumen Económico del Mes</h2>
+        </div>
+        <div id="resumenMes" class="resumen-mes-wrapper"></div>
+      </div>
+    </section>
+
+    <section id="tab-ajustes" class="tab-content" data-role="admin">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>⚙️ Ajustes Generales</h2>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label for="ajustePinAdmin">PIN de Administrador (actual)</label>
+            <input id="ajustePinAdmin" type="text" inputmode="numeric" />
+          </div>
+          <div>
+            <label for="ajustePinNuevo">Nuevo PIN Admin</label>
+            <input id="ajustePinNuevo" type="text" inputmode="numeric" maxlength="10" placeholder="Nuevo PIN..." />
+          </div>
+          <div>
+            <label for="ajustePinConfirmar">Confirmar Nuevo PIN</label>
+            <input id="ajustePinConfirmar" type="text" inputmode="numeric" maxlength="10" placeholder="Repite el nuevo PIN..." />
+          </div>
+          <div style="display:flex;align-items:flex-end;">
+            <button class="btn primary" id="btnCambiarPinAdmin" style="width:100%;">🔐 Cambiar PIN Admin</button>
+          </div>
+        </div>
+        <p id="ajustesStatus" class="status" style="margin-top:.8rem;"></p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>📂 Gestión de Datos</h2>
+        </div>
+        <div class="actions">
+          <button class="btn primary" id="btnExportarTodo">💾 Exportar Copia de Seguridad (JSON)</button>
+          <label class="btn" for="importarTodoFile" style="cursor:pointer;">📂 Importar Copia (JSON)</label>
+          <input type="file" id="importarTodoFile" accept=".json" hidden />
+          <button class="btn danger" id="btnBorrarTodo">⚠️ BORRAR TODOS LOS DATOS</button>
+        </div>
+        <p class="hint">Exporta una copia de seguridad periódicamente para no perder información.</p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="confirmDialog">
+    <form method="dialog" class="dialog-form">
+      <h3 id="confirmDialogTitle">Confirmar acción</h3>
+      <p id="confirmDialogMessage">¿Estás seguro?</p>
+      <menu>
+        <button value="cancel" class="btn">Cancelar</button>
+        <button value="default" class="btn primary danger" id="confirmDialogOk">Confirmar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="quickNewObraDialog">
+    <form method="dialog" class="dialog-form" id="quickNewObraForm">
+      <h3 style="margin-top:0;">🏗️ Crear Obra Rápida</h3>
+      <p class="hint">Añade un trabajo eventual. Después los administradores podrán completar datos (presupuesto, dirección, etc.)</p>
+      <label for="qnoNombre">Nombre de la Obra *</label>
+      <input id="qnoNombre" type="text" required placeholder="Ej: Arreglo fachada Casa Ruiz" />
+      <label for="qnoCliente">Cliente *</label>
+      <input id="qnoCliente" type="text" required placeholder="Ej: Sr. Juan Ruiz" />
+      <label for="qnoDireccion">Dirección (opcional)</label>
+      <input id="qnoDireccion" type="text" placeholder="Calle, número, población..." />
+      <p id="qnoStatus" class="status" style="margin-top:.6rem;"></p>
+      <menu>
+        <button value="cancel" class="btn">Cancelar</button>
+        <button value="default" class="btn primary" id="qnoSubmit">💾 Crear y usar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="quickMovDialog">
+    <form method="dialog" class="dialog-form" id="quickMovForm">
+      <h3 style="margin-top:0;" id="qmTitle">💰 Registrar Movimiento</h3>
+      <p class="hint" id="qmHint">Obra: </p>
+      <input type="hidden" id="qmObraId" />
+      <input type="hidden" id="qmTipo" />
+      <div class="form-grid">
+        <div>
+          <label for="qmFecha">Fecha *</label>
+          <input id="qmFecha" type="date" required />
+        </div>
+        <div>
+          <label for="qmImporte">Importe (€) *</label>
+          <input id="qmImporte" type="number" step="0.01" min="0.01" required placeholder="Ej: 1500" />
+        </div>
+        <div>
+          <label for="qmCategoria">Categoría *</label>
+          <select id="qmCategoria" required></select>
+        </div>
+        <div>
+          <label for="qmFormaPago">Forma de Pago</label>
+          <select id="qmFormaPago">
+            <option value="transferencia">Transferencia</option>
+            <option value="efectivo">Efectivo</option>
+            <option value="tarjeta">Tarjeta</option>
+            <option value="cheque">Cheque</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+      </div>
+      <label for="qmConcepto">Concepto / Descripción *</label>
+      <input id="qmConcepto" type="text" required placeholder="Breve descripción..." />
+      <label for="qmReferencia">Referencia / Factura nº</label>
+      <input id="qmReferencia" type="text" placeholder="Nº albarán, factura..." />
+      <p id="qmStatus" class="status" style="margin-top:.6rem;"></p>
+      <menu>
+        <button value="cancel" class="btn">Cancelar</button>
+        <button value="default" class="btn primary" id="qmSubmit">💾 Guardar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

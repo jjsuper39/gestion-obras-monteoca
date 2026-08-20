@@ -1,0 +1,20 @@
+{
+  "name": "gestion-obras-app",
+  "version": "2.0.0-cloud",
+  "description": "App gestión horas trabajadores, contabilidad y rentabilidad por obra (Versión CLOUD sincronizada)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
