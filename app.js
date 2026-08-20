@@ -460,13 +460,14 @@ async function loadAllData(silent = false, force = false) {
   if (!getToken() || !state.session.role) return false;
   const now = Date.now();
   if (!force && !silent) {
-    // Forzado por botón/acción usuario: no respetamos cooldown mínimo, PERO si hay lock en curso devolvemos el promise en curso
     if (_loadLock) return _loadLock;
   }
   if (!force && silent && _loadLock) return _loadLock;
   if (!force && (now - _lastLoadedAt) < _MIN_MS_BETWEEN_LOADS) return true;
   try {
     _loadLock = (async () => {
+      // REINICIO ABSOLUTO DEL STATE ANTES DE DESCARGAR (el bug de datos obsoletos que no aparecen!)
+      state.trabajadores = []; state.obras = []; state.horas = []; state.movimientos = []; state.cajasData = null;
       const d = await api("/api/sync");
       state.trabajadores = Array.isArray(d.trabajadores) ? d.trabajadores : [];
       state.obras = Array.isArray(d.obras) ? d.obras : [];
@@ -474,6 +475,8 @@ async function loadAllData(silent = false, force = false) {
       state.movimientos = Array.isArray(d.movimientos) ? d.movimientos : [];
       if (d.adminPin) state.adminPin = d.adminPin;
       _lastLoadedAt = Date.now();
+      state.ultimaSync = new Date();
+      try { actualizarBadgeUltimaSync(); } catch {}
       return true;
     })();
     return await _loadLock;
@@ -483,6 +486,29 @@ async function loadAllData(silent = false, force = false) {
   } finally {
     _loadLock = null;
   }
+}
+
+async function forceSyncUI() {
+  try {
+    setStatus(document.getElementById("syncStatus") || document.createElement("div"), "⏳ Forzando sincronización completa...", false);
+    state.cajasData = null; _cajasLoadLock = null;
+    await loadAllData(false, true);
+    try { await renderAll(); } catch {}
+    setStatus(document.getElementById("syncStatus") || document.createElement("div"), "✅ Sincronizado: " + new Date().toLocaleTimeString("es-ES"), false, true);
+    return true;
+  } catch (e) {
+    setStatus(document.getElementById("syncStatus") || document.createElement("div"), "❌ Error sincronizando. Prueba de nuevo.", true);
+    return false;
+  }
+}
+
+function actualizarBadgeUltimaSync() {
+  const el = document.getElementById("ultimaSyncInfo");
+  if (!el) return;
+  const t = state.ultimaSync ? new Date(state.ultimaSync) : null;
+  const txt = t ? `🕒 Sincro: ${t.toLocaleTimeString("es-ES")}` : "⚠️ No sincronizado";
+  el.textContent = txt;
+  el.title = t ? `Última sincronización: ${t.toLocaleString("es-ES")}. Si no ves las últimas horas/obras pulsa 🔄 Sincronizar.` : "Pulsa 🔄 Sincronizar para traer los últimos datos de la nube.";
 }
 
 async function saveTrabajadoresCUD(op, data) {
@@ -546,6 +572,9 @@ function bindLoginEvents() {
   document.getElementById("btnLogout").addEventListener("click", () => {
     logout(false);
   });
+
+  const btnFS = document.getElementById("btnForceSync");
+  if (btnFS) btnFS.addEventListener("click", () => forceSyncUI());
 }
 
 async function afterLoginSuccess() {
