@@ -168,6 +168,13 @@ function getTrabajadorById(id) {
 function getObraById(id) {
   return state.obras.find((o) => o.id === id) || null;
 }
+function getTrabajadoresActivos() {
+  try {
+    return (Array.isArray(state.trabajadores) ? state.trabajadores : [])
+      .filter((t) => t && t.activo !== false)
+      .sort((a, b) => String(a.nombre || "").localeCompare(String(b.nombre || ""), "es"));
+  } catch { return []; }
+}
 
 function isAdmin() { return state.session?.role === "admin"; }
 function isWorker() { return state.session?.role === "worker"; }
@@ -1970,21 +1977,24 @@ async function renderAll() {
 let _cajasLoadLock = null;
 
 function populateResponsablesSelect() {
-  const opts = ['<option value="">Sin asignar (general)</option>'];
-  getTrabajadoresActivos().forEach(t => {
-    const rolLabel = t.rol === "admin" ? "👑 Socio/Admin" : "👷 Trabajador";
-    opts.push(`<option value="${t.id}">${rolLabel} · ${escapeHtml(t.nombre)}</option>`);
-  });
-  if (els.movimientoResponsable) {
-    const prev = els.movimientoResponsable.value;
-    els.movimientoResponsable.innerHTML = opts.join("");
-    if (prev) els.movimientoResponsable.value = prev;
-  }
-  if (els.qmResponsable) {
-    const prev2 = els.qmResponsable.value;
-    els.qmResponsable.innerHTML = opts.join("");
-    if (prev2) els.qmResponsable.value = prev2;
-  }
+  try {
+    const opts = ['<option value="">Sin asignar (general)</option>'];
+    getTrabajadoresActivos().forEach(t => {
+      if (!t || !t.id) return;
+      const rolLabel = t.rol === "admin" ? "👑 Socio/Admin" : "👷 Trabajador";
+      opts.push(`<option value="${escapeHtml(t.id)}">${rolLabel} · ${escapeHtml(t.nombre || "?")}</option>`);
+    });
+    if (els.movimientoResponsable) {
+      const prev = els.movimientoResponsable.value;
+      els.movimientoResponsable.innerHTML = opts.join("");
+      if (prev) els.movimientoResponsable.value = prev;
+    }
+    if (els.qmResponsable) {
+      const prev2 = els.qmResponsable.value;
+      els.qmResponsable.innerHTML = opts.join("");
+      if (prev2) els.qmResponsable.value = prev2;
+    }
+  } catch (e) { console.warn("populateResponsablesSelect:", e); }
 }
 
 async function loadCajasData(force = false) {

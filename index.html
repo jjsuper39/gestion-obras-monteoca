@@ -657,9 +657,13 @@
           <button class="btn primary" id="btnExportarTodo">💾 Exportar Copia de Seguridad (JSON)</button>
           <label class="btn" for="importarTodoFile" style="cursor:pointer;">📂 Importar Copia (JSON)</label>
           <input type="file" id="importarTodoFile" accept=".json" hidden />
-          <button class="btn danger" id="btnBorrarTodo">⚠️ BORRAR TODOS LOS DATOS</button>
+          <button class="btn danger" id="btnBorrarTodo">⚠️ <strong>BORRAR TODO (Incluido Nube Turso / Render)</strong></button>
         </div>
         <p class="hint">Exporta una copia de seguridad periódicamente para no perder información.</p>
+        <div style="margin-top:1rem;padding:1rem;background:#fff7ed;border:1px solid #fdba74;border-radius:.5rem;font-size:.95rem;">
+          <strong style="color:#9a3412;">🚨 Por qué mis datos volvían aunque borraba la base de datos?</strong>
+          <p style="margin:.4rem 0 0;">Si tu app está en Render.com con BBDD Turso: la BBDD REAL está <strong>EN LA NUBE (3 réplicas en Europa)</strong>. Borrar el archivo <code>.db</code> local o reiniciar Render NO borra NADA (es una protección para NO perder datos reales de nóminas/obras). Usa el botón <strong>⚠️ BORRAR TODO (Incluido Nube Turso)</strong> de arriba para borrar de VERDAD y desaparecerán las obras "fantasma".</p>
+        </div>
       </div>
     </section>
   </main>
