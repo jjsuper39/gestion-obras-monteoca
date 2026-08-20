@@ -59,11 +59,13 @@ const state = {
 
 const els = {};
 
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop|Mobile|webOS|BlackBerry|Touch/i.test(navigator.userAgent || "") || (navigator.maxTouchPoints || 0) > 1 || (window.screen ? Math.min(window.screen.width||0, window.screen.height||0) < 820 : false);
+
 /* ============ LOCKS / DEBOUNCE (evitar races y refrescos agresivos) ============ */
 let _loadLock = null;       // Promise en curso de loadAllData (para no solapar)
 let _lastLoadedAt = 0;      // timestamp último fetch exitoso
-const _MIN_MS_BETWEEN_LOADS = 4000;   // 4s mínimo entre refrescos silenciosos
-const _TAB_REFRESH_COOLDOWN = 6000;   // 6s entre refrescos al cambiar pestaña
+const _MIN_MS_BETWEEN_LOADS = IS_MOBILE ? 2200 : 4000;   // móvil 2.2s mínimo entre refrescos, PC 4s
+const _TAB_REFRESH_COOLDOWN = IS_MOBILE ? 3000 : 6000;   // refresco pestaña más rápido en móvil
 let _lastTabRefreshAt = 0;
 
 /* ============ UTILIDADES ============ */
@@ -78,16 +80,29 @@ async function api(endpoint, options = {}) {
   const url = (endpoint.startsWith("http") ? "" : API_BASE) + endpoint;
   const headers = {
     "Accept": "application/json",
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
     ...(options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
     ...(options.headers || {}),
   };
   const tok = getToken();
   if (tok) headers["Authorization"] = "Bearer " + tok;
+  const u = new URL(url, window.location.origin);
+  // Anti caché móvil definitiva: parámetro aleatorio único por petición
+  u.searchParams.set("_t", `${Date.now()}_${Math.random().toString(36).slice(2,9)}`);
   let res;
   try {
-    res = await fetch(url, { ...options, headers, credentials: "same-origin" });
+    res = await fetch(u.toString(), {
+      ...options,
+      headers,
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "follow",
+      referrerPolicy: "no-referrer-when-downgrade",
+    });
   } catch (e) {
-    throw new Error("Error de red. Comprueba que el servidor está arrancado.");
+    throw new Error("Error de red: comprueba que tengas Internet/WiFi y que el servidor esté arrancado.");
   }
   const isJson = (res.headers.get("Content-Type") || "").includes("application/json");
   let data = null;
@@ -577,6 +592,31 @@ function bindLoginEvents() {
 
   const btnFS = document.getElementById("btnForceSync");
   if (btnFS) btnFS.addEventListener("click", () => forceSyncUI());
+  const btnDebugMovil = document.getElementById("btnDebugMovil");
+  if (btnDebugMovil) btnDebugMovil.addEventListener("click", async () => {
+    try {
+      const t = state.ultimaSync ? new Date(state.ultimaSync).toLocaleString("es-ES") : "NUNCA";
+      const lines = [
+        "📱 Información depuración:",
+        `Modo móvil detectado: ${IS_MOBILE ? "SÍ (optimizado)" : "NO (modo PC)"}`,
+        `Navegador / SO: ${(navigator.userAgent||"").slice(0,80)}`,
+        `Conexión: ${navigator.onLine ? "ONLINE" : "SIN INTERNET"} ${navigator.connection && navigator.connection.effectiveType ? " ("+navigator.connection.effectiveType+")" : ""}`,
+        `Token guardado: ${getToken() ? "SÍ ("+String(getToken()).length+" chars)" : "NO"}`,
+        `Rol sesión: ${state.session?.role || "Ninguno"}`,
+        `Última sincro OK: ${t}`,
+        `Datos en RAM ahora: trabajadores=${state.trabajadores.length} · obras=${state.obras.length} · horas=${state.horas.length} · mov=${state.movimientos.length}`,
+        "",
+        "¿Qué quieres hacer?",
+      ];
+      const elegido = confirm(lines.join("\n") + "\n\nPulsa [Aceptar] para HARD RESET CACHÉ MÓVIL (cierra sesión y limpia datos del navegador).\nPulsa [Cancelar] para no hacer nada.");
+      if (!elegido) return;
+      try { localStorage.clear(); } catch {}
+      try { sessionStorage.clear(); } catch {}
+      try { if (caches && caches.keys) { (await caches.keys()).forEach(k => caches.delete(k)); } } catch {}
+      setStatus(document.getElementById("syncStatus"), "🔄 Limpiando caché móvil y recargando...", false);
+      setTimeout(() => window.location.reload(), 900);
+    } catch (e) { alert("Error depuración: " + e.message); }
+  });
 }
 
 async function afterLoginSuccess() {
@@ -2392,6 +2432,7 @@ async function init() {
     showLoginScreen();
   }
 
+  const POLLING_MS = IS_MOBILE ? 25000 : 45000; // móvil cada 25s (más propenso a caché), PC 45s
   function canAutoRefresh() {
     if (!state.session?.role) return false;
     if (document.hidden) return false;
@@ -2402,21 +2443,34 @@ async function init() {
     return true;
   }
   let _lastUserActivityAt = Date.now();
-  ["mousedown","keydown","touchstart","visibilitychange","focus","scroll","click"].forEach(ev => {
+  ["mousedown","keydown","touchstart","visibilitychange","focus","scroll","click","touchend","touchmove"].forEach(ev => {
     window.addEventListener(ev, () => _lastUserActivityAt = Date.now(), { passive: true });
   });
   async function silentRefresh() {
     if (!canAutoRefresh()) return;
-    if (Date.now() - _lastUserActivityAt > 90000) return; // si 1.5 min sin tocar nada, para (ahorra Render Free)
+    if (Date.now() - _lastUserActivityAt > 90000) return;
     try {
       const ok2 = await loadAllData(true);
       if (ok2) try { await renderAll(); } catch {}
     } catch (e) { /* ignore */ }
   }
 
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) silentRefresh(); });
-  window.addEventListener("focus", silentRefresh);
-  setInterval(silentRefresh, 45000); // 45 segundos, no 10s! Render FREE no aguanta tanto
+  // ✅ MÓVIL: al VOLVER de fondo (app suspendida) hacemos SÍ O SÍ forceSync (ignora cooldown)
+  document.addEventListener("visibilitychange", async () => {
+    if (!document.hidden) {
+      if (IS_MOBILE) { try { await forceSyncUI(); } catch {} }
+      else { await silentRefresh(); }
+    }
+  });
+  window.addEventListener("focus", async () => {
+    if (IS_MOBILE && Date.now() - _lastLoadedAt > 6000) { try { await forceSyncUI(); } catch {} }
+    else { await silentRefresh(); }
+  });
+  window.addEventListener("online", async () => { try { await forceSyncUI(); } catch {} });
+  setInterval(silentRefresh, POLLING_MS);
+  // Badge móvil visible en navbar para saber que estamos en modo móvil optimizado
+  const syncBadge = document.getElementById("ultimaSyncInfo");
+  if (syncBadge && IS_MOBILE) syncBadge.title = "📱 MODO MÓVIL ACTIVADO: sincroniza más rápido (25s). Si no ves datos nuevos pulsa 🔄 Sincronizar.";
 }
 
 document.addEventListener("DOMContentLoaded", init);

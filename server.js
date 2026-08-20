@@ -76,9 +76,33 @@ async function dbRun(sql, params = []) {
 
 /* =============== EXPRESS =============== */
 const app = express();
-app.use(cors());
+app.use(cors({ maxAge: 0 }));
 app.use(express.json({ limit: "10mb" }));
-app.use(express.static(BASE_DIR, { index: false, extensions: ["html"] }));
+
+// ✅ CABECERAS ANTI-CACHÉ PARA MÓVILES (nunca más datos viejos):
+// (TODOS los endpoints /api/* devuelven datos SIN CACHÉ)
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0, stale-while-revalidate=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
+
+// Archivos estáticos (HTML/JS/CSS) -> SIN CACHÉ (evita que el móvil mantenga código viejo):
+app.use((req, res, next) => {
+  if (/\.(css|js|html|json|png|jpg|svg|ico)$/i.test(req.path)) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+  }
+  next();
+});
+
+app.use(express.static(BASE_DIR, { index: false, extensions: ["html"], etag: false, lastModified: false }));
 
 /* =============== AUTENTICACIÓN JWT =============== */
 function signToken(payload) { return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES }); }

@@ -56,8 +56,21 @@
           <span id="syncStatus" class="hint" style="margin:0;font-size:.82rem;"></span>
           <span id="userBadge" class="user-badge"></span>
           <button class="btn small ghost" id="btnForceSync" title="Traer al instante todas las novedades de obra+horas de la nube (si no ves lo último)">🔄 Sincronizar</button>
+          <button class="btn small ghost" id="btnDebugMovil" style="display:none;background:#fef3c7;color:#78350f;border-color:#fbbf24;" title="Información depuración + limpiar caché móvil si no actualiza">📱 Debug Móvil</button>
           <button class="btn small ghost" id="btnLogout">🚪 Salir</button>
         </div>
+        <script>
+          // Detectar móvil en cuanto carga el navbar y mostrar botón debug
+          (function(){
+            function isMob() {
+              return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop|Mobile|webOS|BlackBerry|Touch/i.test(navigator.userAgent||"") || (navigator.maxTouchPoints||0)>1 || (window.screen ? Math.min(window.screen.width||0,window.screen.height||0)<820 : false);
+            }
+            window.addEventListener("DOMContentLoaded", function(){
+              var b = document.getElementById("btnDebugMovil");
+              if (b && isMob()) b.style.display = "inline-flex";
+            });
+          })();
+        </script>
       </div>
       <p id="appSubtitle">Control de horas trabajadores, contabilidad y rentabilidad por obra</p>
     </header>
