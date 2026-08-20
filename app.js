@@ -55,6 +55,13 @@ const state = {
 
 const els = {};
 
+/* ============ LOCKS / DEBOUNCE (evitar races y refrescos agresivos) ============ */
+let _loadLock = null;       // Promise en curso de loadAllData (para no solapar)
+let _lastLoadedAt = 0;      // timestamp último fetch exitoso
+const _MIN_MS_BETWEEN_LOADS = 4000;   // 4s mínimo entre refrescos silenciosos
+const _TAB_REFRESH_COOLDOWN = 6000;   // 6s entre refrescos al cambiar pestaña
+let _lastTabRefreshAt = 0;
+
 /* ============ UTILIDADES ============ */
 function uuid() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -395,10 +402,14 @@ async function activateTab(name) {
     if (firstVisible) return activateTab(firstVisible.dataset.tab);
   }
   if (state.session?.role) {
-    try {
-      const ok = await loadAllData(true);
-      if (ok) renderAll();
-    } catch (e) { /* ignore */ }
+    const now = Date.now();
+    if (now - _lastTabRefreshAt >= _TAB_REFRESH_COOLDOWN) {
+      _lastTabRefreshAt = now;
+      try {
+        const ok = await loadAllData(true, false);
+        if (ok) renderAll();
+      } catch (e) { /* ignore */ }
+    }
   }
 }
 
@@ -435,20 +446,33 @@ async function loginWorker(trabajadorId, pin) {
   }
 }
 
-async function loadAllData(silent = false) {
+async function loadAllData(silent = false, force = false) {
   loadSession();
   if (!getToken() || !state.session.role) return false;
+  const now = Date.now();
+  if (!force && !silent) {
+    // Forzado por botón/acción usuario: no respetamos cooldown mínimo, PERO si hay lock en curso devolvemos el promise en curso
+    if (_loadLock) return _loadLock;
+  }
+  if (!force && silent && _loadLock) return _loadLock;
+  if (!force && (now - _lastLoadedAt) < _MIN_MS_BETWEEN_LOADS) return true;
   try {
-    const d = await api("/api/sync");
-    state.trabajadores = Array.isArray(d.trabajadores) ? d.trabajadores : [];
-    state.obras = Array.isArray(d.obras) ? d.obras : [];
-    state.horas = Array.isArray(d.horas) ? d.horas : [];
-    state.movimientos = Array.isArray(d.movimientos) ? d.movimientos : [];
-    if (d.adminPin) state.adminPin = d.adminPin;
-    return true;
+    _loadLock = (async () => {
+      const d = await api("/api/sync");
+      state.trabajadores = Array.isArray(d.trabajadores) ? d.trabajadores : [];
+      state.obras = Array.isArray(d.obras) ? d.obras : [];
+      state.horas = Array.isArray(d.horas) ? d.horas : [];
+      state.movimientos = Array.isArray(d.movimientos) ? d.movimientos : [];
+      if (d.adminPin) state.adminPin = d.adminPin;
+      _lastLoadedAt = Date.now();
+      return true;
+    })();
+    return await _loadLock;
   } catch (e) {
     if (!silent) logout(true);
     return false;
+  } finally {
+    _loadLock = null;
   }
 }
 
@@ -1005,10 +1029,7 @@ function bindWorkerQuickEvents() {
     try {
       const creado = await saveHorasCUD("POST", registro);
       const regId = creado?.id || registro.id;
-      // Guardado remoto OK, refetch para asegurar consistencia cálculos día en BD
-      await loadAllData();
-      // Re-calcular desgloses día en frontend (también se recalcula en renderAll):
-      recalcularDesgloseParaTrabajadorDia(trabajadorId, fecha);
+      await loadAllData(false, true);
       const rec = state.horas.find((x) => x.id === regId) || creado || registro;
 
       populateWorkerQuickForm();
@@ -1108,8 +1129,7 @@ async function onSubmitHora(e) {
       msg = `✅ Guardado: ${creado?.horasBase ?? data.horasBase}h base${(creado?.horasExtra ?? data.horasExtra) > 0 ? ` + ${creado?.horasExtra ?? data.horasExtra}h extra` : ""} = ${formatMoney(creado?.costeTotal ?? data.costeTotal)}`;
     }
     clearHoraForm();
-    await loadAllData();
-    recalcularDesgloseTrabajadorFechasAfectadas(trabajadorId, fechasAfectadas);
+    await loadAllData(false, true);
     renderAll();
     setStatus(els.horaStatus, msg, false, true);
   } catch (err) {
@@ -1123,10 +1143,8 @@ async function deleteHora(id) {
   if (isWorker() && h.trabajadorId !== state.session.trabajadorId) return;
   if (!(await confirmAction("Eliminar", "¿Eliminar este registro de horas?"))) return;
   try {
-    const tid = h.trabajadorId; const fecha = h.fecha;
     await saveHorasCUD("DELETE", { id });
-    await loadAllData();
-    recalcularDesgloseParaTrabajadorDia(tid, fecha);
+    await loadAllData(false, true);
     renderAll();
   } catch (err) {
     alert("❌ " + err.message);
@@ -1945,8 +1963,13 @@ async function init() {
     if (ae && ["INPUT","TEXTAREA","SELECT"].includes(ae.tagName) && ae.type !== "submit" && ae.type !== "button") return false;
     return true;
   }
+  let _lastUserActivityAt = Date.now();
+  ["mousedown","keydown","touchstart","visibilitychange","focus","scroll","click"].forEach(ev => {
+    window.addEventListener(ev, () => _lastUserActivityAt = Date.now(), { passive: true });
+  });
   async function silentRefresh() {
     if (!canAutoRefresh()) return;
+    if (Date.now() - _lastUserActivityAt > 90000) return; // si 1.5 min sin tocar nada, para (ahorra Render Free)
     try {
       const ok2 = await loadAllData(true);
       if (ok2) renderAll();
@@ -1955,7 +1978,7 @@ async function init() {
 
   document.addEventListener("visibilitychange", () => { if (!document.hidden) silentRefresh(); });
   window.addEventListener("focus", silentRefresh);
-  setInterval(silentRefresh, 10000);
+  setInterval(silentRefresh, 45000); // 45 segundos, no 10s! Render FREE no aguanta tanto
 }
 
 document.addEventListener("DOMContentLoaded", init);

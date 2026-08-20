@@ -250,6 +250,7 @@ app.post("/api/horas", authMiddleware, async (req, res) => {
   if (!data.trabajadorId || !data.obraId || !data.fecha || !(Number(data.cantidad) > 0))
     return res.status(400).json({ error: "Faltan campos (trabajador, obra, fecha, cantidad > 0)" });
   const id = data.id || randomId();
+  const tid = data.trabajadorId; const fecha = data.fecha;
   try {
     await insertHora({
       id, fecha: data.fecha, trabajadorId: data.trabajadorId, obraId: data.obraId,
@@ -259,6 +260,7 @@ app.post("/api/horas", authMiddleware, async (req, res) => {
       costeTotal: Number(data.costeTotal) || 0, notas: data.notas || "",
       createdAt: data.createdAt || new Date().toISOString(), updatedAt: data.updatedAt || null,
     });
+    await recalcularDesgloseParaTrabajadorDia(tid, fecha);
     res.status(201).json(normalizeHora(await dbGet("SELECT * FROM horas WHERE id = ?", [id])));
   } catch (e) {
     return res.status(500).json({ error: e.message || "Error al crear" });
@@ -271,7 +273,10 @@ app.put("/api/horas/:id", authMiddleware, async (req, res) => {
   if (req.user.role !== "admin" && h.trabajadorId !== req.user.trabajadorId)
     return res.status(403).json({ error: "No tuyo" });
   const data = req.body || {};
+  const fechas = new Set([h.fecha]);
   const merged = { ...normalizeHora(h), ...data, id };
+  if (merged.fecha && merged.fecha !== h.fecha) fechas.add(merged.fecha);
+  const tid = merged.trabajadorId || h.trabajadorId;
   await dbRun(
     `UPDATE horas SET fecha = ?, trabajadorId = ?, obraId = ?, cantidad = ?, horasBase = ?, horasExtra = ?, tarifaBase = ?, tarifaExtra = ?, costeBase = ?, costeExtra = ?, costeTotal = ?, notas = ?, updatedAt = ? WHERE id = ?`,
     [merged.fecha, merged.trabajadorId, merged.obraId, Number(merged.cantidad) || 0,
@@ -279,6 +284,7 @@ app.put("/api/horas/:id", authMiddleware, async (req, res) => {
       Number(merged.tarifaExtra) || 0, Number(merged.costeBase) || 0, Number(merged.costeExtra) || 0,
       Number(merged.costeTotal) || 0, merged.notas || "", new Date().toISOString(), id]
   );
+  for (const f of fechas) await recalcularDesgloseParaTrabajadorDia(tid, f);
   res.json(normalizeHora(await dbGet("SELECT * FROM horas WHERE id = ?", [id])));
 });
 app.delete("/api/horas/:id", authMiddleware, async (req, res) => {
@@ -287,7 +293,9 @@ app.delete("/api/horas/:id", authMiddleware, async (req, res) => {
   if (!h) return res.status(404).json({ error: "No existe" });
   if (req.user.role !== "admin" && h.trabajadorId !== req.user.trabajadorId)
     return res.status(403).json({ error: "No tuyo" });
+  const tid = h.trabajadorId; const fecha = h.fecha;
   await dbRun("DELETE FROM horas WHERE id = ?", [id]);
+  await recalcularDesgloseParaTrabajadorDia(tid, fecha);
   res.json({ ok: true });
 });
 
@@ -401,6 +409,38 @@ function normalizeMov(m) { if (!m) return m; return { ...m, importe: Number(m.im
 function randomId() {
   try { return require("crypto").randomBytes(16).toString("hex").replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5"); }
   catch { return Array.from({length:16}).map(()=>Math.floor(Math.random()*16).toString(16)).join("").replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5"); }
+}
+
+/* =============== CÁLCULO HORAS BASE/EXTRA (BACKEND, DETERMINISTA) =============== */
+const HORAS_BASE_AL_DIA = 8;
+async function recalcularDesgloseParaTrabajadorDia(trabajadorId, fecha) {
+  if (!trabajadorId || !fecha) return;
+  const t = await dbGet("SELECT tarifa, tarifaExtra FROM trabajadores WHERE id = ?", [trabajadorId]);
+  if (!t) return;
+  const tarifaBase = Number(t.tarifa) || 0;
+  const tarifaExtra = Number(t.tarifaExtra) || tarifaBase || 0;
+  const rows = await dbAll(
+    "SELECT id, cantidad FROM horas WHERE trabajadorId = ? AND fecha = ? ORDER BY datetime(createdAt) ASC, id ASC",
+    [trabajadorId, fecha]
+  );
+  let total = 0;
+  rows.forEach(r => total += Number(r.cantidad) || 0);
+  let umbral = HORAS_BASE_AL_DIA;
+  const updates = [];
+  for (const r of rows) {
+    const cant = Number(r.cantidad) || 0;
+    let base = Math.min(cant, Math.max(0, umbral));
+    let extra = cant - base;
+    umbral -= base;
+    const costeBase = base * tarifaBase;
+    const costeExtra = extra * tarifaExtra;
+    const costeTotal = costeBase + costeExtra;
+    updates.push(dbRun(
+      `UPDATE horas SET horasBase=?, horasExtra=?, tarifaBase=?, tarifaExtra=?, costeBase=?, costeExtra=?, costeTotal=? WHERE id=?`,
+      [base, extra, tarifaBase, tarifaExtra, costeBase, costeExtra, costeTotal, r.id]
+    ));
+  }
+  await Promise.all(updates);
 }
 
 /* =============== INICIALIZACIÓN BBDD =============== */
