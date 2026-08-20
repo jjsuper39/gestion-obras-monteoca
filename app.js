@@ -517,7 +517,7 @@ function bindLoginEvents() {
       return;
     }
     document.getElementById("loginPinAdmin").value = "";
-    afterLoginSuccess();
+    await afterLoginSuccess();
   });
 
   document.getElementById("btnLoginTrabajador").addEventListener("click", async () => {
@@ -531,7 +531,7 @@ function bindLoginEvents() {
       return;
     }
     document.getElementById("loginPinTrabajador").value = "";
-    afterLoginSuccess();
+    await afterLoginSuccess();
   });
 
   document.getElementById("btnLogout").addEventListener("click", () => {
@@ -539,9 +539,14 @@ function bindLoginEvents() {
   });
 }
 
-function afterLoginSuccess() {
+async function afterLoginSuccess() {
+  document.getElementById("loginError").textContent = "📥 Cargando datos...";
+  const ok = await loadAllData(false, true);
+  document.getElementById("loginError").textContent = "";
   applyRoleUI();
-  renderAll();
+  document.getElementById("loginScreen").classList.add("hidden");
+  document.getElementById("appMain").classList.remove("hidden");
+  if (ok) renderAll();
 }
 
 /* ============ CARGA / GUARDADO DATOS ============ */
