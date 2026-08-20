@@ -1653,15 +1653,15 @@ function bindQuickNewObraEvents() {
     }
   });
 
-  els.qnoSubmit.addEventListener("click", (ev) => {
+  els.quickNewObraForm.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
     if (!els.qnoNombre.value.trim() || !els.qnoCliente.value.trim()) {
-      ev.preventDefault();
       setStatus(els.qnoStatus, "Nombre y Cliente son obligatorios.", true);
       return;
     }
-    if (!submitQuickNewObra()) {
-      ev.preventDefault();
-    }
+    setStatus(els.qnoStatus, "⏳ Guardando obra en la nube...", false);
+    const ok = await submitQuickNewObra();
+    if (!ok) setStatus(els.qnoStatus, "❌ No se pudo crear la obra. Inténtalo otra vez.", true);
   });
 }
 
@@ -1683,12 +1683,23 @@ async function submitQuickNewObra() {
   };
   try {
     const creada = await saveObrasCUD("POST", obra);
-    const obraId = creada?.id;
-    await loadAllData();
+    if (!creada || !creada.id) throw new Error("Sin respuesta del servidor");
+    const obraId = creada.id;
+    state.cajasData = null;
+    await loadAllData(false, true);
     renderSelects();
+    populateResponsablesSelect();
     if (els.quickObra && obraId) els.quickObra.value = obraId;
-    if (isAdmin()) { renderObras(); renderDashboard(); }
-    setStatus(document.getElementById("quickStatus"), `✅ Obra "${nombre}" creada correctamente. Ya la tienes seleccionada arriba.`, false, true);
+    if (isWorker()) {
+      populateWorkerQuickForm();
+      renderWorkerSummary();
+    }
+    if (isAdmin()) {
+      try { await renderAll(); } catch { renderObras(); renderDashboard(); renderBalanceGeneral(); try { await renderCajas(); } catch {} }
+    } else {
+      renderHoras();
+    }
+    setStatus(document.getElementById("quickStatus"), `✅ Obra "${nombre}" creada correctamente (${obraId}). Ya la tienes seleccionada arriba.`, false, true);
     if (typeof els.quickNewObraDialog.close === "function") els.quickNewObraDialog.close();
     return true;
   } catch (err) {
