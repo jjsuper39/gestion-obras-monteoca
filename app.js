@@ -409,7 +409,7 @@ async function activateTab(name) {
       _lastTabRefreshAt = now;
       try {
         const ok = await loadAllData(true, false);
-        if (ok) renderAll();
+        if (ok) try { await renderAll(); } catch {}
       } catch (e) { /* ignore */ }
     }
   }
@@ -548,7 +548,7 @@ async function afterLoginSuccess() {
   applyRoleUI();
   document.getElementById("loginScreen").classList.add("hidden");
   document.getElementById("appMain").classList.remove("hidden");
-  if (ok) renderAll();
+  if (ok) try { await renderAll(); } catch {}
 }
 
 /* ============ CARGA / GUARDADO DATOS ============ */
@@ -611,12 +611,15 @@ async function onSubmitTrabajador(e) {
       setStatus(els.trabajadorStatus, `✅ Guardado. PIN de ${data.nombre}: ${pin}`, false, true);
     }
     clearTrabajadorForm();
+    state.cajasData = null;
     await loadAllData();
     renderLoginSelect();
     renderTrabajadores();
     renderSelects();
+    populateResponsablesSelect();
     renderDashboard();
     if (isWorker()) renderWorkerSummary();
+    if (isAdmin()) try { await renderCajas(); } catch {}
   } catch (err) {
     setStatus(els.trabajadorStatus, "❌ " + err.message, true);
   }
@@ -631,12 +634,15 @@ async function deleteTrabajador(id) {
   if (!(await confirmAction("Eliminar Trabajador", msg))) return;
   try {
     await saveTrabajadoresCUD("DELETE", { id });
+    state.cajasData = null;
     await loadAllData();
     renderLoginSelect();
     renderTrabajadores();
     renderSelects();
+    populateResponsablesSelect();
     renderDashboard();
     renderHoras();
+    if (isAdmin()) try { await renderCajas(); } catch {}
   } catch (err) {
     alert("❌ " + err.message);
   }
@@ -753,12 +759,15 @@ async function onSubmitObra(e) {
       setStatus(els.obraStatus, "✅ Obra guardada", false, true);
     }
     clearObraForm();
+    state.cajasData = null;
     await loadAllData();
     renderObras();
     renderSelects();
+    populateResponsablesSelect();
     renderDashboard();
     renderBalanceGeneral();
     if (isWorker()) populateWorkerQuickForm();
+    if (isAdmin()) try { await renderCajas(); } catch {}
   } catch (err) {
     setStatus(els.obraStatus, "❌ " + err.message, true);
   }
@@ -774,12 +783,15 @@ async function deleteObra(id) {
   if (!(await confirmAction("Eliminar Obra", msg))) return;
   try {
     await saveObrasCUD("DELETE", { id });
+    state.cajasData = null;
     await loadAllData();
     renderObras();
     renderSelects();
+    populateResponsablesSelect();
     renderDashboard();
     renderBalanceGeneral();
     if (isWorker()) populateWorkerQuickForm();
+    if (isAdmin()) try { await renderCajas(); } catch {}
   } catch (err) { alert("❌ " + err.message); }
 }
 
@@ -1137,7 +1149,7 @@ async function onSubmitHora(e) {
     }
     clearHoraForm();
     await loadAllData(false, true);
-    renderAll();
+    try { await renderAll(); } catch {}
     setStatus(els.horaStatus, msg, false, true);
   } catch (err) {
     setStatus(els.horaStatus, "❌ " + err.message, true);
@@ -1152,7 +1164,7 @@ async function deleteHora(id) {
   try {
     await saveHorasCUD("DELETE", { id });
     await loadAllData(false, true);
-    renderAll();
+    try { await renderAll(); } catch {}
   } catch (err) {
     alert("❌ " + err.message);
   }
@@ -1281,9 +1293,11 @@ async function onSubmitMovimiento(e) {
       setStatus(els.movimientoStatus, "✅ Guardado", false, true);
     }
     clearMovimientoForm();
+    state.cajasData = null;
     await loadAllData();
     renderMovimientos(); renderBalanceGeneral(); renderObras(); renderDashboard(); renderCierre();
-    renderCajas();
+    populateResponsablesSelect();
+    if (isAdmin()) try { await renderCajas(); } catch {}
   } catch (err) {
     setStatus(els.movimientoStatus, "❌ " + err.message, true);
   }
@@ -1293,9 +1307,11 @@ async function deleteMovimiento(id) {
   if (!(await confirmAction("Eliminar", "¿Eliminar movimiento?"))) return;
   try {
     await saveMovCUD("DELETE", { id });
+    state.cajasData = null;
     await loadAllData();
     renderMovimientos(); renderBalanceGeneral(); renderObras(); renderDashboard(); renderCierre();
-    renderCajas();
+    populateResponsablesSelect();
+    if (isAdmin()) try { await renderCajas(); } catch {}
   } catch (err) { alert("❌ " + err.message); }
 }
 
@@ -1736,13 +1752,15 @@ async function submitQuickMov() {
   };
   try {
     await saveMovCUD("POST", data);
+    state.cajasData = null;
     await loadAllData();
     const obra = getObraById(obraId);
     const msg = `✅ ${tipo === "ingreso" ? "Ingreso" : "Gasto"} de ${formatMoney(importe)} guardado en "${obra?.nombre || "obra"}".`;
     alert(msg);
     if (typeof els.quickMovDialog.close === "function") els.quickMovDialog.close();
     renderBalanceGeneral(); renderMovimientos(); renderObras(); renderDashboard(); renderCierre();
-    renderCajas();
+    populateResponsablesSelect();
+    if (isAdmin()) try { await renderCajas(); } catch {}
     return true;
   } catch (err) {
     setStatus(els.qmStatus, "❌ " + err.message, true);
@@ -1805,7 +1823,7 @@ function bindAjustesEvents() {
       if (!b || !Array.isArray(b.trabajadores)) throw new Error("Archivo no válido.");
       await api("/api/backup/restaurar", { method: "POST", body: JSON.stringify(b) });
       await loadAllData();
-      renderLoginSelect(); renderAll();
+      renderLoginSelect(); try { await renderAll(); } catch {}
       setStatus(els.ajustesStatus, "✅ Backup importado correctamente (datos en servidor).", false, true);
     } catch (err) {
       setStatus(els.ajustesStatus, "❌ Error al importar: " + err.message, true);
@@ -1820,7 +1838,7 @@ function bindAjustesEvents() {
       await api("/api/backup/restaurar", { method: "POST", body: JSON.stringify({ trabajadores: [], obras: [], horas: [], movimientos: [], settings: [{ clave: "admin_pin", valor: DEFAULT_ADMIN_PIN }] }) });
       state.adminPin = DEFAULT_ADMIN_PIN;
       await loadAllData();
-      renderLoginSelect(); renderAll();
+      renderLoginSelect(); try { await renderAll(); } catch {}
       setStatus(els.ajustesStatus, "✅ Datos del servidor borrados. PIN restaurado a 1234.", false, true);
     } catch (err) {
       setStatus(els.ajustesStatus, "❌ " + err.message, true);
@@ -1925,7 +1943,7 @@ function setDefaults() {
   if (els.cierreMes) els.cierreMes.value = currentMonthISO();
 }
 
-function renderAll() {
+async function renderAll() {
   const trabajadoresIds = [...new Set(state.horas.map((h) => h.trabajadorId))];
   trabajadoresIds.forEach((tid) => {
     const fechas = [...new Set(state.horas.filter((h) => h.trabajadorId === tid).map((h) => h.fecha))];
@@ -1940,7 +1958,7 @@ function renderAll() {
     renderBalanceGeneral();
     renderMovimientos();
     renderCierre();
-    renderCajas();
+    try { await renderCajas(); } catch {}
   } else if (isWorker()) {
     populateWorkerQuickForm();
     renderWorkerSummary();
@@ -1948,7 +1966,9 @@ function renderAll() {
   renderHoras();
 }
 
-/* ============ RESPONSABLES / CAJAS (SOCIOS) ============ */
+/* ============ RESPONSABLES / CAJAS (SOCIOS) - VERSIÓN FIABLE (SIN RACES ASÍNCRONAS) ============ */
+let _cajasLoadLock = null;
+
 function populateResponsablesSelect() {
   const opts = ['<option value="">Sin asignar (general)</option>'];
   getTrabajadoresActivos().forEach(t => {
@@ -1967,16 +1987,32 @@ function populateResponsablesSelect() {
   }
 }
 
-async function loadCajasData() {
+async function loadCajasData(force = false) {
   if (!isAdmin()) return null;
-  const qs = new URLSearchParams();
-  if (state.filtros.cajas.desde) qs.set("desde", state.filtros.cajas.desde);
-  if (state.filtros.cajas.hasta) qs.set("hasta", state.filtros.cajas.hasta);
-  const q = qs.toString();
-  const data = await api(`/api/cajas${q ? "?" + q : ""}`);
-  state.cajasData = data || null;
-  return state.cajasData;
+  if (_cajasLoadLock) return _cajasLoadLock;
+  if (!force && state.cajasData) return state.cajasData;
+
+  _cajasLoadLock = (async () => {
+    const qs = new URLSearchParams();
+    if (state.filtros.cajas.desde) qs.set("desde", state.filtros.cajas.desde);
+    if (state.filtros.cajas.hasta) qs.set("hasta", state.filtros.cajas.hasta);
+    const q = qs.toString();
+    const data = await api(`/api/cajas${q ? "?" + q : ""}`);
+    state.cajasData = data || null;
+    return state.cajasData;
+  })();
+  try { return await _cajasLoadLock; } finally { _cajasLoadLock = null; }
 }
+
+function _setCajasLoadingUI(loadingMsg) {
+  if (!els || !els.cajasSaldosTable) return;
+  if (!loadingMsg) return;
+  const tbody = els.cajasSaldosTable.querySelector("tbody");
+  if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="empty"><span style="font-size:1.1em">⏳ ${escapeHtml(loadingMsg)}</span></td></tr>`;
+  if (els.cajasGlobalCards) els.cajasGlobalCards.innerHTML = `<div class="stat-card stat-blue" style="grid-column:1/-1"><h3>💵 Cajas</h3><p class="stat-value" style="font-size:1.3em">⏳ ${escapeHtml(loadingMsg)}</p></div>`;
+  if (els.cajasMovimientosList) els.cajasMovimientosList.innerHTML = `<li class="empty">⏳ ${escapeHtml(loadingMsg)}</li>`;
+}
+
 function renderCajasGlobalCards() {
   if (!isAdmin() || !els.cajasGlobalCards) return;
   const d = state.cajasData?.saldos || [];
@@ -2071,19 +2107,31 @@ function renderCajasMovimientos() {
     </li>`;
   }).join("");
 }
-async function renderCajas() {
+async function renderCajas(options = {}) {
   if (!isAdmin()) return;
-  if (!state.cajasData) { try { await loadCajasData(); } catch (e) { /* ignore */ } }
-  renderCajasGlobalCards();
-  renderCajasSaldosTable();
-  renderCajasMovimientos();
+  const force = Boolean(options.force);
+  try {
+    if (force) state.cajasData = null;
+    _setCajasLoadingUI("Actualizando cajas y saldos...");
+    await loadCajasData(force);
+    renderCajasGlobalCards();
+    renderCajasSaldosTable();
+    renderCajasMovimientos();
+  } catch (e) {
+    console.warn("renderCajas error:", e);
+    if (els && els.cajasSaldosTable) {
+      const t = els.cajasSaldosTable.querySelector("tbody");
+      if (t) t.innerHTML = `<tr><td colspan="6" class="empty" style="color:#b91c1c">❌ Error al cargar cajas. Pulsa Actualizar</td></tr>`;
+    }
+  }
 }
 async function refreshCajasFull() {
   try {
     state.cajasData = null;
+    _cajasLoadLock = null;
+    _setCajasLoadingUI("Descargando datos actualizados...");
     await loadAllData(true, true);
-    await loadCajasData();
-    renderCajas();
+    await renderCajas({ force: true });
   } catch (e) { console.warn(e); }
 }
 function bindCajasEvents() {
@@ -2092,20 +2140,20 @@ function bindCajasEvents() {
     state.filtros.cajas.desde = els.cajasDesde.value || null;
     state.filtros.cajas.hasta = els.cajasHasta.value || null;
   };
-  els.cajasDesde.addEventListener("change", () => { setFiltrosUI(); refreshCajasFull(); });
-  els.cajasHasta.addEventListener("change", () => { setFiltrosUI(); refreshCajasFull(); });
-  els.btnCajasMesActual.addEventListener("click", () => {
+  els.cajasDesde.addEventListener("change", async () => { setFiltrosUI(); await refreshCajasFull(); });
+  els.cajasHasta.addEventListener("change", async () => { setFiltrosUI(); await refreshCajasFull(); });
+  els.btnCajasMesActual.addEventListener("click", async () => {
     const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, "0");
     els.cajasDesde.value = `${y}-${m}-01`; const ld = new Date(y, d.getMonth() + 1, 0);
     els.cajasHasta.value = `${y}-${m}-${String(ld.getDate()).padStart(2, "0")}`;
-    setFiltrosUI(); refreshCajasFull();
+    setFiltrosUI(); await refreshCajasFull();
   });
-  els.btnCajasTodo.addEventListener("click", () => {
+  els.btnCajasTodo.addEventListener("click", async () => {
     els.cajasDesde.value = ""; els.cajasHasta.value = "";
     state.filtros.cajas.desde = null; state.filtros.cajas.hasta = null;
     state.filtros.cajas.selectedTrabajadorId = null;
     if (els.cajasSelectedInfo) els.cajasSelectedInfo.textContent = "Pulsa una fila para ver los movimientos de esa caja";
-    refreshCajasFull();
+    await refreshCajasFull();
   });
   els.btnCajasRefresh.addEventListener("click", () => refreshCajasFull());
 }
@@ -2125,7 +2173,7 @@ async function init() {
   const ok = await loadAllData();
   if (ok && state.session.role) {
     applyRoleUI();
-    renderAll();
+    try { await renderAll(); } catch {}
   } else {
     try {
       const dummyTok = getToken();
@@ -2154,7 +2202,7 @@ async function init() {
     if (Date.now() - _lastUserActivityAt > 90000) return; // si 1.5 min sin tocar nada, para (ahorra Render Free)
     try {
       const ok2 = await loadAllData(true);
-      if (ok2) renderAll();
+      if (ok2) try { await renderAll(); } catch {}
     } catch (e) { /* ignore */ }
   }
 
