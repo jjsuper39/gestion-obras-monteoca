@@ -584,7 +584,38 @@ async function afterLoginSuccess() {
   applyRoleUI();
   document.getElementById("loginScreen").classList.add("hidden");
   document.getElementById("appMain").classList.remove("hidden");
-  if (ok) try { await renderAll(); } catch {}
+  if (ok) {
+    if (isAdmin()) try { comprobarPerdidaDatosPotencial(); } catch {}
+    try { await renderAll(); } catch {}
+  }
+}
+
+function comprobarPerdidaDatosPotencial() {
+  const info = state.backupAutoInfo || null;
+  if (!info || !info.resumen) return;
+  const totalActual =
+    (state.trabajadores||[]).length +
+    (state.obras||[]).length +
+    (state.horas||[]).length +
+    (state.movimientos||[]).length;
+  const totalBackup =
+    Number(info.resumen.trabajadores||0) +
+    Number(info.resumen.obras||0) +
+    Number(info.resumen.horas||0) +
+    Number(info.resumen.movimientos||0);
+  const banner = document.getElementById("warningBackupBanner");
+  if (!banner) return;
+  if (totalActual <= 2 && totalBackup >= 3) {
+    banner.classList.remove("hidden");
+    const r = info.resumen;
+    const fecha = new Date(info.generadoEn);
+    const txt = `⚠️ <b>POSIBLE PÉRDIDA DE DATOS DETECTADA:</b> Backup anterior del <b>${fecha.toLocaleString("es-ES")}</b> → ${r.trabajadores||0} trabajadores, ${r.obras||0} obras, ${r.horas||0} horas, ${r.movimientos||0} movimientos. AHORA TIENES ${totalActual} registros (${totalActual===0?"BBDD VACÍA":"muy pocos datos"}). Pulsa el botón naranja para RECUPERAR LOS DATOS:`;
+    const span = banner.querySelector("span");
+    if (span) span.innerHTML = txt;
+    console.warn("[WARN] Posible pérdida datos detectada:", { actual: totalActual, backup: totalBackup, info });
+  } else {
+    banner.classList.add("hidden");
+  }
 }
 
 /* ============ CARGA / GUARDADO DATOS ============ */
@@ -1848,7 +1879,7 @@ function bindAjustesEvents() {
     try {
       const a = document.createElement("a");
       const ts = new Date().toISOString().slice(0, 10);
-      const url = (API_BASE || "") + "/api/backup";
+      const url = (API_BASE || "") + "/api/backup/exportar";
       const tok = getToken();
       const res = await fetch(url, { headers: { "Authorization": tok ? "Bearer " + tok : "" } });
       if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -1861,6 +1892,22 @@ function bindAjustesEvents() {
     }
   });
 
+  const btnRestAuto = document.getElementById("btnRestaurarBackupAuto");
+  if (btnRestAuto) btnRestAuto.addEventListener("click", async () => {
+    try {
+      setStatus(els.ajustesStatus, "⏳ Recuperando último backup automático...", false);
+      const res = await api("/api/backup/restaurar-ultimo-automatico", { method: "POST", body: "{}" });
+      state.cajasData = null; await loadAllData(false, true);
+      renderLoginSelect(); try { await renderAll(); } catch {}
+      const r = res?.resumen || {};
+      setStatus(els.ajustesStatus, `✅ Último backup restaurado correctamente: ${r.trabajadores||0} trabajadores, ${r.obras||0} obras, ${r.horas||0} horas, ${r.movimientos||0} movimientos.`, false, true);
+      const wb = document.getElementById("warningBackupBanner");
+      if (wb) wb.classList.add("hidden");
+    } catch (err) {
+      setStatus(els.ajustesStatus, "❌ No se pudo restaurar: " + err.message, true);
+    }
+  });
+
   document.getElementById("importarTodoFile").addEventListener("change", async (ev) => {
     const f = ev.target.files?.[0]; if (!f) return;
     if (!(await confirmAction("Importar backup", "Esto sobrescribirá TODOS los datos actuales (servidor). ¿Continuar?"))) { ev.target.value = ""; return; }
@@ -1869,7 +1916,7 @@ function bindAjustesEvents() {
       const b = JSON.parse(txt);
       if (!b || !Array.isArray(b.trabajadores)) throw new Error("Archivo no válido.");
       await api("/api/backup/restaurar", { method: "POST", body: JSON.stringify(b) });
-      await loadAllData();
+      state.cajasData = null; await loadAllData(false, true);
       renderLoginSelect(); try { await renderAll(); } catch {}
       setStatus(els.ajustesStatus, "✅ Backup importado correctamente (datos en servidor).", false, true);
     } catch (err) {

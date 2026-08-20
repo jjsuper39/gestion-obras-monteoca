@@ -133,21 +133,74 @@ app.post("/api/auth/cambiar-pin-admin", authMiddleware, requireAdmin, async (req
 });
 
 /* =============== INICIALIZACIÓN CONECTORES + TABLAS + START =============== */
+const BACKUP_AUTO_KEY = "backup_auto_ultimo";
+const IS_RENDER = Boolean(
+  process.env.RENDER_SERVICE_ID || process.env.RENDER || process.env.RENDER_EXTERNAL_URL ||
+  (process.env.HOME || "").includes("/opt/render") || (process.env.PWD || "").includes("/opt/render")
+);
+
+function lineasWarningRender() {
+  console.error("\n" + "🚨".repeat(40));
+  console.error("🚨 [PELIGRO MÁXIMO: ESTÁS EN RENDER PERO NO TIENES TURSO CLOUD CONFIGURADO 🚨");
+  console.error("🚨 Faltan estas 2 VARIABLES DE ENTORNO EN RENDER DASHBOARD -> ENVIRONMENT:");
+  console.error("🚨   1) TURSO_DATABASE_URL  (ej: libsql://gestion-obras-monteoca-XXXXXX.turso.io)");
+  console.error("🚨   2) TURSO_AUTH_TOKEN  (ej: eyJhbGciOiJFZERTQS...)");
+  console.error("🚨 SIN ESTAS DOS VARIABLES: Estás usando SQLite en el DISCO EFÍMERO del contenedor de Render");
+  console.error("🚨 Cada vez que haces un REDEPLOY (cada cambio de código o inactividad) SE BORRARÁN TODOS LOS DATOS.");
+  console.error("🚨 SOLUCIÓN 2 minutos: regístrate en https://turso.tech (GRATIS 500MB persistentes), crea una BBDD,");
+  console.error("🚨   crea un token, copia los 2 valores y pégalos en Render Environment -> Add Environment Variables.");
+  console.error("🚨".repeat(40) + "\n");
+}
+
+async function guardarBackupAutomatico(motivo = "auto_arranque") {
+  try {
+    const [trabajadores, obras, horas, movimientos, srows] = await Promise.all([
+      dbAll("SELECT * FROM trabajadores"),
+      dbAll("SELECT * FROM obras"),
+      dbAll("SELECT * FROM horas"),
+      dbAll("SELECT * FROM movimientos"),
+      dbAll("SELECT clave, valor FROM settings WHERE clave != ?", [BACKUP_AUTO_KEY]),
+    ]);
+    const total = trabajadores.length + obras.length + horas.length + movimientos.length;
+    if (total === 0) { console.log("ℹ️ [BackupAuto] No se guarda backup (BBDD vacía)"); return null; }
+    const payload = JSON.stringify({
+      version: 2, generadoEn: new Date().toISOString(), motivo,
+      trabajadores, obras, horas, movimientos, settings: srows,
+      resumen: {
+        trabajadores: trabajadores.length, obras: obras.length,
+        horas: horas.length, movimientos: movimientos.length
+      }
+    });
+    const upsert = USE_TURSO
+      ? `INSERT INTO settings (clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`
+      : `INSERT INTO settings (clave, valor) VALUES (?, ?) ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor`;
+    await dbRun(upsert, [BACKUP_AUTO_KEY, payload]);
+    console.log(`✅ [BackupAuto] GUARDADO (${motivo}) OK: trabajadores=${trabajadores.length}, obras=${obras.length}, horas=${horas.length}, mov=${movimientos.length}`);
+    return payload;
+  } catch (e) {
+    console.warn("⚠️ [BackupAuto] Error guardando backup:", e.message);
+    return null;
+  }
+}
+
 (async () => {
   if (USE_TURSO) {
     const { createClient } = require("@libsql/client");
     tursoClient = createClient({ url: TURSO_URL, authToken: TURSO_TOKEN });
-    // Forzamos UTC igual en SQLite y Turso
     await tursoClient.execute("SET timezone = 'UTC'").catch(() => {});
   } else {
+    if (IS_RENDER) lineasWarningRender();
     const sqlite3 = require("sqlite3").verbose();
     const { open } = require("sqlite");
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     db = await open({ filename: DB_PATH, driver: sqlite3.Database });
     await db.run("PRAGMA journal_mode = WAL;").catch(() => {});
     await db.run("PRAGMA foreign_keys = ON;").catch(() => {});
   }
   await initDatabase();
   await seedInitialData();
+  // ✅ PROTECCIÓN Nº1: BACKUP AUTOMÁTICO CADA ARRANQUE / REDEPLOY
+  await guardarBackupAutomatico(IS_RENDER ? "redeploy_render" : "arranque_local");
   app.listen(PORT, HOST, () => printStartupBanner());
 })().catch((err) => {
   console.error("❌ Fatal error al iniciar la BBDD o servidor:", err);
@@ -161,19 +214,34 @@ app.get("/api/sync", authMiddleware, async (req, res) => {
   const horas = (await dbAll("SELECT * FROM horas ORDER BY fecha DESC, createdAt DESC")).map(normalizeHora);
   const movimientos = (await dbAll("SELECT * FROM movimientos ORDER BY fecha DESC, createdAt DESC")).map(normalizeMov);
   const row = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);
-  res.json({
+  const resp = {
     trabajadores, obras, horas, movimientos,
     adminPin: req.user.role === "admin" ? (row?.valor || DEFAULT_ADMIN_PIN) : null,
     currentUser: req.user,
-  });
+    generadoEn: new Date().toISOString(),
+  };
+  if (req.user.role === "admin") {
+    try {
+      const b = await dbGet("SELECT valor FROM settings WHERE clave = ?", [BACKUP_AUTO_KEY]);
+      if (b?.valor) {
+        const bj = JSON.parse(b.valor);
+        resp.backupAutoInfo = {
+          generadoEn: bj.generadoEn, motivo: bj.motivo, resumen: bj.resumen || null
+        };
+      }
+    } catch {}
+  }
+  res.json(resp);
 });
 
-app.get("/api/backup", authMiddleware, requireAdmin, async (req, res) => {
-  const trabajadores = await dbAll("SELECT * FROM trabajadores");
-  const obras = await dbAll("SELECT * FROM obras");
-  const horas = await dbAll("SELECT * FROM horas");
-  const movimientos = await dbAll("SELECT * FROM movimientos");
-  const settings = await dbAll("SELECT * FROM settings");
+app.get("/api/backup/exportar", authMiddleware, requireAdmin, async (req, res) => {
+  const [trabajadores, obras, horas, movimientos, settings] = await Promise.all([
+    dbAll("SELECT * FROM trabajadores"),
+    dbAll("SELECT * FROM obras"),
+    dbAll("SELECT * FROM horas"),
+    dbAll("SELECT * FROM movimientos"),
+    dbAll("SELECT clave, valor FROM settings WHERE clave != ?", [BACKUP_AUTO_KEY]),
+  ]);
   const backup = {
     exportadoEn: new Date().toISOString(), app: "GestionObras-v2", version: 2,
     trabajadores, obras, horas, movimientos, settings
@@ -183,21 +251,60 @@ app.get("/api/backup", authMiddleware, requireAdmin, async (req, res) => {
   res.json(backup);
 });
 
+app.get("/api/backup/ultimo-automatico", authMiddleware, requireAdmin, async (req, res) => {
+  const row = await dbGet("SELECT valor FROM settings WHERE clave = ?", [BACKUP_AUTO_KEY]);
+  if (!row?.valor) return res.status(404).json({ error: "No hay backup automático guardado" });
+  try { res.json(JSON.parse(row.valor)); } catch { res.status(500).json({ error: "Backup corrupto" }); }
+});
+
+app.post("/api/backup/restaurar-ultimo-automatico", authMiddleware, requireAdmin, async (req, res) => {
+  const row = await dbGet("SELECT valor FROM settings WHERE clave = ?", [BACKUP_AUTO_KEY]);
+  if (!row?.valor) return res.status(404).json({ error: "No hay backup automático guardado" });
+  try {
+    const b = JSON.parse(row.valor);
+    if (!Array.isArray(b.trabajadores) || !Array.isArray(b.obras)) return res.status(400).json({ error: "Backup corrupto" });
+    await dbRun("PRAGMA foreign_keys = OFF");
+    for (const t of ["horas", "movimientos", "obras", "trabajadores"]) await dbRun(`DELETE FROM ${t}`);
+    if (Array.isArray(b.settings)) {
+      await dbRun("DELETE FROM settings WHERE clave != ?", [BACKUP_AUTO_KEY]);
+      for (const s of b.settings) {
+        if (s?.clave === BACKUP_AUTO_KEY) continue;
+        await dbRun("INSERT INTO settings (clave, valor) VALUES (?, ?)", [s.clave, s.valor]);
+      }
+    }
+    for (const t of b.trabajadores) await insertTrabajador(t);
+    for (const o of b.obras) await insertObra(o);
+    if (Array.isArray(b.horas)) for (const h of b.horas) await insertHora(h);
+    if (Array.isArray(b.movimientos)) for (const m of b.movimientos) await insertMov(m);
+    await dbRun("PRAGMA foreign_keys = ON");
+    res.json({ ok: true, resumen: b.resumen });
+  } catch (e) { return res.status(500).json({ error: e.message || "Error restaurar auto" }); }
+});
+
 app.post("/api/backup/restaurar", authMiddleware, requireAdmin, async (req, res) => {
   const { trabajadores, obras, horas, movimientos, settings } = req.body || {};
   if (!Array.isArray(trabajadores) || !Array.isArray(obras)) return res.status(400).json({ error: "Backup inválido" });
   try {
+    // ✅ PROTECCIÓN ANTES DE BORRAR NADA: guardar backup automático del estado actual
+    await guardarBackupAutomatico("pre_restaurar_usuario_" + Date.now());
+
     await dbRun("PRAGMA foreign_keys = OFF");
     for (const t of ["horas", "movimientos", "obras", "trabajadores"]) await dbRun(`DELETE FROM ${t}`);
     if (Array.isArray(settings)) {
-      await dbRun("DELETE FROM settings");
-      for (const s of settings) await dbRun("INSERT INTO settings (clave, valor) VALUES (?, ?)", [s.clave, s.valor]);
+      // NUNCA borramos BACKUP_AUTO_KEY al restaurar
+      await dbRun("DELETE FROM settings WHERE clave != ?", [BACKUP_AUTO_KEY]);
+      for (const s of settings) {
+        if (!s || s.clave === BACKUP_AUTO_KEY) continue;
+        await dbRun("INSERT INTO settings (clave, valor) VALUES (?, ?)", [s.clave, s.valor]);
+      }
     }
     for (const t of trabajadores) await insertTrabajador(t);
     for (const o of obras) await insertObra(o);
     if (Array.isArray(horas)) for (const h of horas) await insertHora(h);
     if (Array.isArray(movimientos)) for (const m of movimientos) await insertMov(m);
     await dbRun("PRAGMA foreign_keys = ON");
+    // Después de restaurar, guardamos backup del NUEVO estado
+    await guardarBackupAutomatico("post_restaurar_ok");
     res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: e.message || "Error al restaurar backup" });
