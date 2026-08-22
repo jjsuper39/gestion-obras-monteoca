@@ -966,6 +966,73 @@ app.post("/api/cajas/reparar", authMiddleware, requireAdmin, handle(async (req, 
   res.json({ ok: true, corregidos, socioPrincipal: socioId, primerTrabajadorId: trabajadorId });
 }));
 
+// ============================================================
+// 🔧 [SOLUCIÓN DEFINITIVA] ASIGNAR TODAS LAS ENTREGAS A KEVIN
+//     Botón 1 click. No hay capas, no hay fallback: UPDATE DIRECTO SQL.
+// ============================================================
+app.post("/api/arreglar-entregas-kevin", authMiddleware, requireAdmin, handle(async (req, res) => {
+  const filaTrabajador = await dbGet(`SELECT id, nombre, rol FROM trabajadores WHERE LOWER(COALESCE(rol,'')) NOT IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
+  const filaSocio = await dbGet(`SELECT id, nombre, rol FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
+  if (!filaTrabajador?.id) return res.status(400).json({ error: "No hay ningún trabajador NO admin en la BBDD. Crea primero a Kevin." });
+  if (!filaSocio?.id) return res.status(400).json({ error: "No hay ningún socio/admin en la BBDD." });
+  const trabajadorId = filaTrabajador.id;
+  const socioId = filaSocio.id;
+
+  // 1) ASIGNAR responsableId = KEVIN a TODAS las entregas nómina (sin condiciones):
+  const updResp = await dbRun(`UPDATE movimientos SET responsableId = ?
+    WHERE LOWER(COALESCE(tipo,'')) = 'gasto'
+    AND (
+      LOWER(COALESCE(categoria,'')) LIKE '%nomin%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%entrega%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%anticipo%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%nomina%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%adelanto%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%cuenta%'
+    )`, [trabajadorId]);
+  const cuantosResp = Number(typeof updResp.changes ?? updResp.rowsAffected ?? 0) || 0;
+
+  // 2) ASIGNAR realizadoPorId = SOCIO PRINCIPAL (Juanje) a TODAS esas entregas:
+  const updReal = await dbRun(`UPDATE movimientos SET realizadoPorId = ?
+    WHERE LOWER(COALESCE(tipo,'')) = 'gasto'
+    AND (
+      LOWER(COALESCE(categoria,'')) LIKE '%nomin%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%entrega%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%anticipo%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%nomina%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%adelanto%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%cuenta%'
+    ) AND (realizadoPorId IS NULL OR TRIM(COALESCE(realizadoPorId,'')) = '')`, [socioId]);
+  const cuantosReal = Number(typeof updReal.changes ?? updReal.rowsAffected ?? 0) || 0;
+
+  console.log(`\n========== ✅ [SOLUCIÓN DEFINITIVA ENTREGAS A KEVIN] ==========`);
+  console.log(`Trabajador (Kevin): id=${trabajadorId}, nombre=${filaTrabajador.nombre}`);
+  console.log(`Socio principal: id=${socioId}, nombre=${filaSocio.nombre}`);
+  console.log(`Entregas actualizadas responsableId -> Kevin: ${cuantosResp}`);
+  console.log(`Entregas actualizadas realizadoPorId -> Juanje (solo vacíos): ${cuantosReal}`);
+  console.log(`==============================================================\n`);
+
+  // 3) DEVOLVER DIAGNÓSTICO COMPLETO para mostrárselo al admin:
+  const entregasFinal = await dbAll(`SELECT id, fecha, importe, tipo, concepto, categoria, responsableId, realizadoPorId FROM movimientos
+    WHERE LOWER(COALESCE(tipo,'')) = 'gasto'
+    AND (
+      LOWER(COALESCE(categoria,'')) LIKE '%nomin%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%entrega%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%anticipo%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%nomina%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%adelanto%'
+      OR LOWER(COALESCE(concepto,'')) LIKE '%cuenta%'
+    ) ORDER BY fecha DESC, createdAt DESC;`);
+  res.json({
+    ok: true,
+    trabajador: { id: trabajadorId, nombre: filaTrabajador.nombre, rol: filaTrabajador.rol },
+    socioPrincipal: { id: socioId, nombre: filaSocio.nombre, rol: filaSocio.rol },
+    entregas_actualizadas_responsable: cuantosResp,
+    entregas_actualizadas_realizado: cuantosReal,
+    total_entregas_nomina: entregasFinal.length,
+    listado_entregas: entregasFinal,
+  });
+}));
+
 /* =============== FALLBACK SPA =============== */
 app.get("*", (req, res, next) => {
   if (req.path.startsWith("/api/")) return next();

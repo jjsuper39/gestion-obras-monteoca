@@ -3634,13 +3634,68 @@ function bindCajasEvents() {
       if (r?.ok) {
         await alert(`✅ ¡${Number(r.corregidos)||0} movimientos arreglados!\n\nSocio principal = ${r.socioPrincipal || "Juanje"}\n\nPulsa Aceptar y luego:\n1) Pulsa 🔄 Actualizar (justo al lado de este botón)\n\nVerás a Juanje: Cobró = 6000€, Pagó = 90€, Saldo = 5910€ ✅`);
         try {
-          state.cajasData = null; _cajasLoadLock = null;
+          state.cajasData = null; _cajasLoadLock = null; _misEntregasCache = null;
           await loadAllData(true, true);
           await safeRenderAll(true);
         } catch {}
       } else alert("❌ Error: " + (r?.error || "sin mensaje"));
     } catch (e) { alert("❌ Error reparando cajas: " + e.message); }
   });
+
+  // ============================================================
+  // 👉 SOLUCIÓN DEFINITIVA: ASIGNAR TODAS LAS ENTREGAS A KEVIN
+  //    Endpoint directo SQL UPDATE, sin fallback, sin capas JS.
+  //    Funciona con LOS 2 BOTONES (pestaña cajas + herramientas admin):
+  // ============================================================
+  async function arreglarEntregasKevinClick() {
+    if (!(await confirmAction(
+      "👉 ¿ASIGNAR TODAS LAS ENTREGAS A KEVIN?",
+      "Esto SOLUCIONARÁ EL FALLO DEFINITIVAMENTE:\n\n" +
+      "✅ TODOS los movimientos de tipo 'gasto' con categoría nómina o concepto 'entrega/adelanto/anticipo'\n" +
+      "   -> les pondrá responsableId = 1er trabajador (Kevin)\n" +
+      "✅ Además, si realizadoPorId está vacío -> le pondrá Juanje (caja socio)\n\n" +
+      "Después de esto, KEVIN SÍ VERÁ TODAS SUS ENTREGAS (40€+50€+20€) en su pantalla 💸 Mis Entregas.\n\n¿Continuar?"
+    ))) return;
+    try {
+      const r = await api("/api/arreglar-entregas-kevin", { method: "POST", body: JSON.stringify({}) });
+      if (r?.ok) {
+        const msg = `
+✅ ¡¡SOLUCIÓN APLICADA CORRECTAMENTE!!
+─────────────────────────────────────────
+👷 Trabajador (Kevin):    ${r.trabajador?.nombre || ""} (id=${r.trabajador?.id})
+👑 Socio principal:       ${r.socioPrincipal?.nombre || ""} (id=${r.socioPrincipal?.id})
+📝 Entregas actualizadas (responsable -> Kevin):  ${r.entregas_actualizadas_responsable ?? 0}
+💳 Entregas caja actualizadas (socio -> Juanje):  ${r.entregas_actualizadas_realizado ?? 0}
+📊 TOTAL ENTREGAS NÓMINA EN LA BBDD:  ${r.total_entregas_nomina ?? 0}
+─────────────────────────────────────────
+✅ Ahora KEVIN SÍ VERÁ SUS ENTREGAS EN 💸 Mis Entregas a Cuenta
+✅ Juanje verá su caja correcta (Cobró - Pagó = Saldo)
+
+👉 ¿Qué hacer AHORA?
+1) Cierra esta ventana.
+2) Entra COMO KEVIN (login trabajador)
+3) Pulsa la pestaña 💸 MIS ENTREGAS A CUENTA
+   → ¡¡YA LE APARECERÁN TODAS!! 😊
+`.trim();
+        console.log("✅ [Arreglar Entregas Kevin]", r);
+        await alert(msg);
+        try {
+          state.cajasData = null; _cajasLoadLock = null; _misEntregasCache = null;
+          await loadAllData(true, true);
+          await safeRenderAll(true);
+        } catch {}
+      } else {
+        alert("❌ Error: " + (r?.error || "mensaje vacío"));
+      }
+    } catch (e) {
+      console.error(e);
+      alert("❌ Error arreglando entregas a Kevin: " + (e?.message || e));
+    }
+  }
+  const btnArreglarEntr1 = document.getElementById("btnArreglarEntregasKevin");
+  const btnArreglarEntr2 = document.getElementById("btnArreglarEntregasKevin2");
+  if (btnArreglarEntr1) btnArreglarEntr1.addEventListener("click", arreglarEntregasKevinClick);
+  if (btnArreglarEntr2) btnArreglarEntr2.addEventListener("click", arreglarEntregasKevinClick);
 }
 function bindMisEntregasEvents() {
   const btnRef = document.getElementById("btnRefreshEntregas");
@@ -3708,12 +3763,16 @@ async function renderMisEntregasCuenta() {
       const totalBBDD = Number(data?._totalEntregasNominaBBDD ?? 0);
       let extraDebug = "";
       if (totalBBDD > 0) {
-        extraDebug = `<div style="margin-top:12px;padding:12px 16px;border:2px dashed #dc2626;background:#fef2f2;border-radius:12px;font-weight:600;color:#991b1b;line-height:1.5;">
-          🚨 <strong>DIAGNÓSTICO AUTOMÁTICO:</strong><br>
-          La BASE DE DATOS TIENE <strong>${totalBBDD} entregas de nómina</strong>, pero no se pudieron asignar a tu usuario.<br>
-          <strong>Causa más probable:</strong> las entregas tienen <code>responsableId</code> que no coincide con tu ID de login (tu id: <code>${String(data?.myId || state.session?.user?.userId || state.session?.user?.trabajadorId || "DESCONOCIDO")}</code>).<br>
-          <strong>Solución 1 CLICK (como ADMIN):</strong> Ve a 💵 <strong>Cajas / Saldos Socios</strong> o a ⚙️ Ajustes → ⚒️ Herramientas Admin → pulsa el botón verde <strong>🔧 REPARAR CAJAS</strong>. Las entregas se asignarán automáticamente al primer trabajador (Kevin).<br>
-          <strong>Solución 2 (trabajador):</strong> Sal y entra de nuevo o pide a tu administrador que use la 💸 Entrega a cuenta directamente (el formulario lo guarda ya con responsableId correcto).
+        extraDebug = `<div style="margin-top:12px;padding:14px 18px;border:3px solid #dc2626;background:#fef2f2;border-radius:14px;font-weight:700;color:#991b1b;line-height:1.6;font-size:1.05em;">
+          🚨 🚨 <strong style="font-size:1.2em;">DIAGNÓSTICO ENCONTRADO: LA BBDD TIENE ${totalBBDD} ENTREGAS PERO NO SE ASIGNARON A TU USUARIO.</strong> 🚨 🚨<br><br>
+          <strong style="font-size:1.1em;">🚨 SOLUCIÓN DEFINITIVA 1 CLICK (solo el ADMIN Juanje lo puede hacer):</strong><br>
+          <div style="margin-top:8px;padding:8px 12px;background:#166534;color:white;border-radius:8px;display:inline-block;font-size:1em;">
+            👉 ADMIN JUANJE: Ve a 💵 <strong>CAJAS / SALDOS SOCIOS</strong> → Pulsa el botón VERDE GIGANTE:<br>
+            <strong>✅ SOLUCIÓN DEFINITIVA: ASIGNAR TODAS LAS ENTREGAS A KEVIN</strong>
+          </div><br><br>
+          <strong>Tus datos de login:</strong><br>
+          • Tu ID de trabajador = <code>${String(data?.myId || state.session?.user?.userId || state.session?.user?.trabajadorId || "DESCONOCIDO")}</code><br>
+          • Las entregas tienen responsableId distinto a este ID (por eso no te salen).
         </div>`;
       }
       const textoExtraAdmin = isAdmin()
