@@ -3661,7 +3661,10 @@ async function loadMisEntregasData(force = false) {
   if (!state.session?.token) return null;
   if (!force && _misEntregasCache) return _misEntregasCache;
   try {
-    _misEntregasCache = await api("/api/me/mis-entregas-cuenta");
+    const url = `/api/me/mis-entregas-cuenta?_t=${Date.now()}_${Math.floor(Math.random()*10000)}`;
+    const datos = await api(url);
+    _misEntregasCache = datos;
+    console.log("💸 [Mis Entregas Cuenta] Datos del BACKEND:", JSON.stringify(datos, null, 2));
     return _misEntregasCache;
   } catch (e) {
     console.warn("loadMisEntregasData error:", e);
@@ -3701,11 +3704,23 @@ async function renderMisEntregasCuenta() {
         </tr>`;
       }).join("");
     } else {
+      // ============== DEBUG NUEVO: Si no hay entregas PERO la BBDD SÍ QUE TIENE entregas (según backend):
+      const totalBBDD = Number(data?._totalEntregasNominaBBDD ?? 0);
+      let extraDebug = "";
+      if (totalBBDD > 0) {
+        extraDebug = `<div style="margin-top:12px;padding:12px 16px;border:2px dashed #dc2626;background:#fef2f2;border-radius:12px;font-weight:600;color:#991b1b;line-height:1.5;">
+          🚨 <strong>DIAGNÓSTICO AUTOMÁTICO:</strong><br>
+          La BASE DE DATOS TIENE <strong>${totalBBDD} entregas de nómina</strong>, pero no se pudieron asignar a tu usuario.<br>
+          <strong>Causa más probable:</strong> las entregas tienen <code>responsableId</code> que no coincide con tu ID de login (tu id: <code>${String(data?.myId || state.session?.user?.userId || state.session?.user?.trabajadorId || "DESCONOCIDO")}</code>).<br>
+          <strong>Solución 1 CLICK (como ADMIN):</strong> Ve a 💵 <strong>Cajas / Saldos Socios</strong> o a ⚙️ Ajustes → ⚒️ Herramientas Admin → pulsa el botón verde <strong>🔧 REPARAR CAJAS</strong>. Las entregas se asignarán automáticamente al primer trabajador (Kevin).<br>
+          <strong>Solución 2 (trabajador):</strong> Sal y entra de nuevo o pide a tu administrador que use la 💸 Entrega a cuenta directamente (el formulario lo guarda ya con responsableId correcto).
+        </div>`;
+      }
       const textoExtraAdmin = isAdmin()
         ? `<div style="margin-top:10px;padding:10px 14px;border:2px dashed #b91c1c;background:#fef2f2;border-radius:10px;font-weight:600;color:#991b1b;">
             ⚠️ <strong>ERES ADMIN / SOCIO:</strong><br>
             Si los trabajadores SÍ tienen entregas guardadas en la BBDD pero aquí NO SALEN: es que tienen el campo <em>Responsable (Caja Trabajador)</em> = vacío (NULL).<br>
-            <strong>Solución 1 CLICK:</strong> Ve a 💵 <strong>Cajas / Saldos Socios</strong> → Pulsa el botón VERDE <strong>🔧 REPARAR CAJAS</strong> → luego vuelve aquí y pulsa 💸 Actualizar entregas.
+            <strong>Solución 1 CLICK:</strong> Ve a 💵 <strong>Cajas / Saldos Socios</strong> → Pulsa el botón VERDE <strong>🔧 REPARAR CAJAS</strong> (está en la fila de filtros, junto a Actualizar) → luego vuelve aquí y pulsa 💸 Actualizar entregas.
           </div>`
         : `<div style="margin-top:10px;padding:10px 14px;border:2px dashed #92400e;background:#fffbeb;border-radius:10px;font-weight:600;color:#78350f;">
             💡 <strong>Nota:</strong> Si crees que SÍ te han dado dinero de adelanto y no aparece, habla con tu administrador (Juanje) para que te asigne correctamente la entrega a tu nombre o pulse <em>Reparar Cajas</em>.
@@ -3715,6 +3730,7 @@ async function renderMisEntregasCuenta() {
           <div style="font-size:1.1em;"><strong>Todavía no tienes entregas a cuenta guardadas.</strong></div>
           <div class="hint" style="margin-top:10px;">Cuando el administrador te entregue un adelanto de nómina aparecerán aquí ordenados por fecha, con importe, concepto y quién te lo entregó.</div>
           ${textoExtraAdmin}
+          ${extraDebug}
         </div>
       </td></tr>`;
     }

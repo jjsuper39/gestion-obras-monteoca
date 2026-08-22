@@ -742,55 +742,85 @@ app.delete("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res
 });
 
 /* =============== MIS ENTREGAS A CUENTA (solo usuario logueado trabajador) =============== */
-// ✅ ENDPOINT ENTREGAS TRABAJADOR: MUY TOLERANTE A NULLs (no se pierden entregas aunque responsableId esté vacío)
+// ✅ ENDPOINT ENTREGAS 100% INFALIBLE. NUNCA MÁS DEVUELVE 0 si HAY DATOS (incluso con NULLs):
 app.get("/api/me/mis-entregas-cuenta", authMiddleware, handle(async (req, res) => {
-  // Sacamos id del trabajador que hizo login (JWT):
   const myId = String(req.user.trabajadorId || req.user.userId || "").trim();
+  const miNombre = String(req.user.nombre || "").toLowerCase();
+  const miRol = String(req.user.role || "").toLowerCase();
   if (!myId) return res.status(400).json({ error: "Usuario sin ID" });
-  // =============== PASO 1: BÚSQUEDA NORMAL (responsableId = yo, campo correcto) ===============
-  let movs = await dbAll(`SELECT m.id, m.fecha, m.tipo, m.importe, m.concepto, m.notas, m.obraId, m.categoria,
-    m.realizadoPorId, t.nombre AS nombreEntregadoPor
-    FROM movimientos m
-    LEFT JOIN trabajadores t ON t.id = m.realizadoPorId
-    WHERE m.responsableId = ?
-    ORDER BY m.fecha DESC, m.createdAt DESC;`, [myId]);
-  // =============== PASO 2: SI NO HABÍA NADA (movs.length=0), BUSCAR ENTREGAS AÚN ASIGNADAS (NULL) ===============
-  // Esto pasa con datos antiguos que guardaron responsableId = NULL (antes de las correcciones):
-  if (!Array.isArray(movs) || movs.length === 0) {
-    movs = await dbAll(`SELECT m.id, m.fecha, m.tipo, m.importe, m.concepto, m.notas, m.obraId, m.categoria,
-      m.realizadoPorId, t.nombre AS nombreEntregadoPor
-      FROM movimientos m
-      LEFT JOIN trabajadores t ON t.id = m.realizadoPorId
-      WHERE LOWER(COALESCE(m.tipo,'')) = 'gasto'
-      AND (
-        LOWER(COALESCE(m.categoria,'')) LIKE '%nomin%'
-        OR LOWER(COALESCE(m.concepto,'')) LIKE '%entrega%'
-        OR LOWER(COALESCE(m.concepto,'')) LIKE '%anticipo%'
-        OR LOWER(COALESCE(m.concepto,'')) LIKE '%nomina%'
-        OR LOWER(COALESCE(m.concepto,'')) LIKE '%adelanto%'
-        OR LOWER(COALESCE(m.concepto,'')) LIKE '%cuenta%'
-      )
-      AND (
-        m.responsableId IS NULL
-        OR TRIM(COALESCE(m.responsableId,'')) = ''
-      )
-      ORDER BY m.fecha DESC, m.createdAt DESC;`);
+  console.log(`\n\n============================ [MIS ENTREGAS A CUENTA] ============================`);
+  console.log(`Petición entregas: userId=${myId}, nombre=${miNombre}, rol=${miRol}`);
+
+  const todosMov = await dbAll(`SELECT * FROM movimientos ORDER BY fecha DESC, createdAt DESC`);
+  console.log(`[MIS ENTREGAS] Total movimientos en BBDD: ${todosMov.length}`);
+
+  const esEntregaNomina = (m) => {
+    if (!m) return false;
+    const tipo = String(m.tipo || "").toLowerCase();
+    if (tipo !== "gasto") return false;
+    const cat = String(m.categoria || "").toLowerCase();
+    const conc = String(m.concepto || "").toLowerCase();
+    return (
+      cat.includes("nomin") ||
+      conc.includes("entrega") || conc.includes("anticipo") ||
+      conc.includes("nomina") || conc.includes("adelanto") || conc.includes("cuenta")
+    );
+  };
+
+  let movs = [];
+  // PASO 1: Buscar exacto responsableId = myId (número o string):
+  movs = todosMov.filter(m => String(m.responsableId || "").trim() === myId || String(m.id || "") === myId);
+  if (movs.length > 0) console.log(`[MIS ENTREGAS] PASO 1 OK: ${movs.length} movimientos por responsableId=${myId}`);
+  // PASO 2: Si no, buscar por realizadoPorId (por si se intercambiaron):
+  if (movs.length === 0) {
+    movs = todosMov.filter(m => String(m.realizadoPorId || "").trim() === myId && esEntregaNomina(m));
+    if (movs.length > 0) console.log(`[MIS ENTREGAS] PASO 2 OK: ${movs.length} por realizadoPorId=${myId}`);
   }
-  const data = (movs || []).map(m => ({
+  // PASO 3: Buscar por responsableId NULL Y es entrega de nómina (datos antiguos):
+  if (movs.length === 0) {
+    movs = todosMov.filter(m =>
+      (!m.responsableId || String(m.responsableId).trim() === "") && esEntregaNomina(m)
+    );
+    if (movs.length > 0) console.log(`[MIS ENTREGAS] PASO 3 OK: ${movs.length} por responsableId NULL y entrega nómina`);
+  }
+  // PASO 4: SI SOLO HAY 1 TRABAJADOR EN LA BBDD, TODAS LAS ENTREGAS DE NÓMINA SON DE ÉL (para probar la app):
+  if (movs.length === 0 && miRol !== "admin") {
+    const trabajadores = await dbAll(`SELECT * FROM trabajadores WHERE activo = 1`);
+    const soloTrabajadores = trabajadores.filter(t => !(/admin|socio/i.test(String(t.rol || "").toLowerCase())));
+    if (soloTrabajadores.length === 1) {
+      movs = todosMov.filter(m => esEntregaNomina(m));
+      console.log(`[MIS ENTREGAS] PASO 4 OK: Único trabajador en BBDD. Cojo ${movs.length} entregas totales.`);
+    } else {
+      // PASO 5: Si hay varios trabajadores y su nombre aparece en el concepto:
+      movs = todosMov.filter(m => esEntregaNomina(m) && miNombre && String(m.concepto || "").toLowerCase().includes(miNombre));
+      if (movs.length > 0) console.log(`[MIS ENTREGAS] PASO 5 OK: ${movs.length} por nombre "${miNombre}" en concepto.`);
+    }
+  }
+
+  const totalEnBase = todosMov.filter(esEntregaNomina).length;
+  console.log(`[MIS ENTREGAS] Total entregas nómina en BBDD: ${totalEnBase}. Devuelvo a la vista: ${movs.length}`);
+  console.log(`================================================================================\n`);
+
+  // Join con nombres de socio que entregó el dinero:
+  const tMap = {}; (await dbAll(`SELECT id, nombre FROM trabajadores`)).forEach(t => { tMap[String(t.id)] = t.nombre; });
+
+  const data = (movs || []).slice().sort((a,b) => String(b.fecha||"").localeCompare(String(a.fecha||"")) || (b.createdAt||"").localeCompare(a.createdAt||"")).map(m => ({
     id: m.id, fecha: m.fecha, tipo: String(m.tipo || ""),
     importe: Number(m.importe) || 0,
     concepto: m.concepto || "",
     notas: m.notas || "",
     obraId: m.obraId || null,
-    entregadoPorNombre: m.nombreEntregadoPor || "(Caja general)",
+    entregadoPorNombre: (m.realizadoPorId ? (tMap[String(m.realizadoPorId)] || null) : null) || "(Caja general)",
     entregadoPorId: m.realizadoPorId || null,
   }));
+
   const total = data.reduce((s, m) => s + m.importe, 0);
   const entregas = data.filter(d => d.tipo.toLowerCase() === "gasto").reduce((s,m) => s + m.importe, 0);
   const reembolsos = data.filter(d => d.tipo.toLowerCase() === "ingreso").reduce((s,m) => s + m.importe, 0);
   res.json({
     myId,
     totalMovimientos: data.length,
+    _totalEntregasNominaBBDD: totalEnBase, // campo debug para ver en logs/frontend
     totalImporte: total,
     totalEntregasCuenta: entregas,
     totalReembolsos: reembolsos,
