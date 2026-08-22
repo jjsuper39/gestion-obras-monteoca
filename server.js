@@ -666,12 +666,23 @@ app.post("/api/movimientos", authMiddleware, requireAdmin, async (req, res) => {
   if (!["ingreso", "gasto"].includes(data.tipo))
     return res.status(400).json({ error: "Tipo debe ser ingreso/gasto" });
   const id = data.id || randomId();
+  const cat = String(data.categoria || "").toLowerCase();
+  const conc = String(data.concepto || "").toLowerCase();
+  // ========== 1) RESPONSABLEID (TRABAJADOR QUE RECIBE ENTREGA NÓMINA) ==========
+  // TAMBIÉN MÚLTIPLES CAPAS para RESPONSABLEID NUNCA NULL (Kevin ve entregas):
+  let responsableId = String(data.responsableId || "").trim() || null;
+  // Si NO VIENE NULL y es GASTO y categoría=nomina/entrega/anticipo → PRIMER TRABAJADOR NO ADMIN (Kevin):
+  if (!responsableId && String(data.tipo || "").toLowerCase() === "gasto" &&
+      (cat.includes("nomin") || conc.includes("entrega") || conc.includes("anticipo") || conc.includes("nomina") || conc.includes("adelanto") || conc.includes("cuenta"))) {
+    const filaT = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) NOT IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
+    if (filaT?.id) responsableId = filaT.id;
+  }
+  // ========== 2) REALIZADOPORID (CAJA SOCIO QUE PAGA - JUANJE) ==========
   // ✅ MÚLTIPLES CAPAS para REALIZADOPORID NUNCA NULL:
-  // Capa 1: viene en data (formulario):
   let realizadoPorId = String(data.realizadoPorId || "").trim() || null;
-  // Capa 2: si responsableId = socio/admin, caja entra/sale de su propia caja (ej: ingreso 6000 a Juanje = caja Juanje):
-  if (!realizadoPorId && String(data.responsableId || "").trim()) {
-    const tr = await dbGet("SELECT id, rol FROM trabajadores WHERE id = ? LIMIT 1;", [data.responsableId]);
+  // Capa 2: si responsableId = socio/admin, caja entra/sale de su propia caja:
+  if (!realizadoPorId && responsableId) {
+    const tr = await dbGet("SELECT id, rol FROM trabajadores WHERE id = ? LIMIT 1;", [responsableId]);
     if (tr && tr.rol && /admin|socio/i.test(tr.rol || "")) realizadoPorId = tr.id;
   }
   // Capa 3: si no, usa el admin que hace la petición:
@@ -683,10 +694,12 @@ app.post("/api/movimientos", authMiddleware, requireAdmin, async (req, res) => {
     const fila = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
     if (fila?.id) realizadoPorId = fila.id;
   }
+  // ========== 3) INSERT FINAL (ambas columnas con su valor sin NULL:
+  console.log(`✅ [POST movimientos] ID=${id} tipo=${data.tipo} importe=${Number(data.importe)} responsableId=${responsableId} realizadoPorId=${realizadoPorId}`);
   try {
     await insertMov({
       id, fecha: data.fecha, tipo: data.tipo, importe: Number(data.importe),
-      obraId: data.obraId || null, responsableId: data.responsableId || null,
+      obraId: data.obraId || null, responsableId: responsableId || null,
       realizadoPorId: realizadoPorId || null,
       categoria: data.categoria || "", formaPago: data.formaPago || "otro",
       concepto: data.concepto, referencia: data.referencia || "",

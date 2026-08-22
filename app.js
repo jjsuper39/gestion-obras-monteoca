@@ -2405,13 +2405,23 @@ async function onSubmitMovimiento(e) {
     const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
     if (socioPrincipal) realizadoPorId = socioPrincipal.id;
   }
+  // ========== TRIPLE CAPA RESPONSABLEID (entrega nomina):
+  const tipoMov = els.movimientoTipo.value;
+  const catMov = String(els.movimientoCategoria.value || "").toLowerCase();
+  const concMov = String(els.movimientoConcepto.value || "").toLowerCase();
+  let responsableId = String(els.movimientoResponsable.value || "").trim() || null;
+  if (!responsableId && tipoMov === "gasto" &&
+      (catMov.includes("nomin") || concMov.includes("entrega") || concMov.includes("anticipo") || concMov.includes("nomina") || concMov.includes("adelanto") || concMov.includes("cuenta"))) {
+    const primerTrab = (state.trabajadores || []).find(x => !(/admin|socio/i.test(String(x.rol || "").toLowerCase())));
+    if (primerTrab) responsableId = primerTrab.id;
+  }
   const data = {
     id: id || undefined,
     fecha: els.movimientoFecha.value,
-    tipo: els.movimientoTipo.value,
+    tipo: tipoMov,
     importe: Number(els.movimientoImporte.value) || 0,
     obraId: els.movimientoObra.value || null,
-    responsableId: els.movimientoResponsable.value || null,
+    responsableId: responsableId || null,
     realizadoPorId: realizadoPorId || null,
     categoria: els.movimientoCategoria.value,
     formaPago: els.movimientoFormaPago.value || "otro",
@@ -2423,6 +2433,7 @@ async function onSubmitMovimiento(e) {
   }
   if (data.obraId === "") data.obraId = null;
   if (data.responsableId === "") data.responsableId = null;
+  console.log("📦 [Movimiento Form] Payload:", JSON.stringify(data,null,2));
   try {
     if (id) {
       await saveMovCUD("PUT", { ...data, id });
@@ -2887,12 +2898,22 @@ async function submitQuickMov() {
   const obraId = els.qmObraId.value;
   const importe = Number(els.qmImporte.value) || 0;
   const concepto = (els.qmConcepto.value || "").trim();
+  const cat = String(els.qmCategoria.value || "").toLowerCase();
+  const concL = concepto.toLowerCase();
   if (!obraId || importe <= 0 || !concepto) return false;
   const _u = state.session?.user || null;
   let yoId = (_u?.userId) || (_u?.trabajadorId) || null;
   if (!yoId) {
     const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
     if (socioPrincipal) yoId = socioPrincipal.id;
+  }
+  // ========== TRIPLE CAPA RESPONSABLEID (entrega nomina):
+  let responsableId = String(els.qmResponsable?.value || "").trim() || null;
+  if (!responsableId && tipo === "gasto" &&
+      (cat.includes("nomin") || concL.includes("entrega") || concL.includes("anticipo") || concL.includes("nomina") || concL.includes("adelanto") || concL.includes("cuenta"))) {
+    // Buscar primer trabajador no admin (Kevin):
+    const primerTrabajador = (state.trabajadores || []).find(x => !(/admin|socio/i.test(String(x.rol || "").toLowerCase())));
+    if (primerTrabajador) responsableId = primerTrabajador.id;
   }
   const _selReal = document.getElementById("qmRealizadoPor");
   let realizadoPorId = (_selReal?.value ? _selReal.value : yoId) || null;
@@ -2906,7 +2927,7 @@ async function submitQuickMov() {
     tipo,
     importe,
     obraId,
-    responsableId: els.qmResponsable.value || null,
+    responsableId: responsableId || null,
     realizadoPorId: realizadoPorId || null,
     categoria: els.qmCategoria.value,
     formaPago: els.qmFormaPago.value || "otro",
@@ -2914,6 +2935,7 @@ async function submitQuickMov() {
     referencia: (els.qmReferencia.value || "").trim(),
     createdAt: new Date().toISOString(),
   };
+  console.log("📦 [QuickMov] Payload:", JSON.stringify(data,null,2));
   try {
     await saveMovCUD("POST", data);
     state.cajasData = null;
@@ -3202,19 +3224,38 @@ function bindGeneralEvents() {
           const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
           if (socioPrincipal) realizadoPorId = socioPrincipal.id;
         }
+        // ✅ =============================================================================
+        // ✅ TRIPLE CAPA PARA RESPONSABLEID (IMPORTANTE: KEVIN NO VE NADA SI FALTA ESTO):
+        // ✅ =============================================================================
+        // Capa 1 -> valor del select oculto ecTrabajadorId (abrirEntregaCuenta lo rellenó):
+        let responsableId = String(document.getElementById("ecTrabajadorId").value || "").trim() || null;
+        // Capa 2 -> si es NULL, usamos trabajadorId del principio (parámetro del click):
+        if (!responsableId) responsableId = String(trabajadorId || "").trim() || null;
+        // Capa 3 -> si sigue vacío, usamos el PRIMER trabajador (NO ADMIN) que haya en la lista (Kevin):
+        if (!responsableId) {
+          const primerTrabajador = (state.trabajadores || []).find(x => !(/admin|socio/i.test(String(x.rol || "").toLowerCase())));
+          if (primerTrabajador) responsableId = primerTrabajador.id;
+        }
+        // ✅ VALIDACIÓN OBLIGATORIA: si responsableId sigue = NULL -> NO GUARDA y avisa al usuario (así no creamos entregas a cuenta vacías):
+        if (!responsableId) {
+          setStatus(stEC, "❌ NO SE PUDO GUARDAR: No hay trabajador seleccionado (responsableId vacío). Si eliges trabajador y sigue sin ir, selecciona a mano a Kevin en la lista o pulsa 🔧 Reparar Cajas.", true);
+          return;
+        }
         const payload = {
           fecha: document.getElementById("ecFecha").value || todayISO(),
           tipo: "gasto",
           importe: importe.toFixed(2),
           obraId: document.getElementById("ecObraId").value || "",
-          responsableId: trabajadorId,
+          responsableId: responsableId,
           realizadoPorId: realizadoPorId || null,
           categoria: "nomina",
           formaPago: document.getElementById("ecFormaPago").value || "efectivo",
           concepto: document.getElementById("ecConcepto").value.trim() || "Adelanto nómina / entrega a cuenta",
-          notas: "",
+          notas: `(Creado form entrega a cuenta) responsable: ${responsableId}. Realizado por caja: ${realizadoPorId}`,
           createdAt: new Date().toISOString(),
         };
+        // ✅ LOG para detectar fallos: en consola navegador (F12) aparece el payload final:
+        console.log("📦 [Entrega a Cuenta] Payload final enviado:", JSON.stringify(payload, null, 2));
         await saveMovimientoCUD("POST", payload);
         state.cajasData = null;
         await loadAllData(false, true);
