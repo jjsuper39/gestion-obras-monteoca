@@ -3696,6 +3696,41 @@ function bindCajasEvents() {
   const btnArreglarEntr2 = document.getElementById("btnArreglarEntregasKevin2");
   if (btnArreglarEntr1) btnArreglarEntr1.addEventListener("click", arreglarEntregasKevinClick);
   if (btnArreglarEntr2) btnArreglarEntr2.addEventListener("click", arreglarEntregasKevinClick);
+
+  // ============================================================
+  // 🧐 DIAGNÓSTICO ENTREGAS (muestra en pantalla TODO lo que hay en BBDD sin Render logs):
+  // ============================================================
+  async function diagEntregasClick() {
+    try {
+      const d = await api(`/api/diag/entregas-completo?_t=${Date.now()}_${Math.floor(Math.random()*10000)}`);
+      if (d?.ok) {
+        const txt = d.informe_texto || "";
+        const txtEntregas = (d.entregasNomina || []).map((m, i) => `  ${i+1}) ${m.fecha} · ${m.importe}€ · "${m.concepto}"\n     Responsable: ${m.responsableNombre || m.responsableId || "NULL"} · Pagado por caja: ${m.realizadoPorNombre || m.realizadoPorId || "NULL"}`).join("\n") || "  (vacío)";
+        const msg = `
+🧐 INFORME DIAGNÓSTICO ENTREGAS
+─────────────────────────────────────────
+${txt}
+─────────────────────────────────────────
+📝 ENTREGAS NÓMINA DETALLE (${d.total_entregas_nomina || 0}):
+${txtEntregas}
+─────────────────────────────────────────
+👉 Pasos a seguir SI NO VES LAS ENTREGAS EN KEVIN:
+1) PULSA primero el botón VERDE: ✅ ASIGNAR TODAS LAS ENTREGAS A KEVIN
+2) Luego cierra la sesión Juanje, entra COMO KEVIN
+3) Pulsa 💸 MIS ENTREGAS A CUENTA → ¡YA TE TIENEN QUE SALIR!
+4) Si siguen sin salir: es que SOLO HAY 1 TRABAJADOR y el endpoint ya devuelve todo. Entra en: ⚙️ Ajustes → ⚒️ Herramientas → Hard Reset Caché.
+        `.trim();
+        console.log("🧐 [DIAGNÓSTICO ENTREGAS]", d);
+        alert(msg);
+      } else alert("❌ Error diagnóstico: " + (d?.error || "sin mensaje"));
+    } catch (e) {
+      alert("❌ Error diagnosticando entregas: " + (e?.message || e));
+    }
+  }
+  const btnDiag1 = document.getElementById("btnDiagEntregasCajas");
+  const btnDiag2 = document.getElementById("btnDiagEntregasTools");
+  if (btnDiag1) btnDiag1.addEventListener("click", diagEntregasClick);
+  if (btnDiag2) btnDiag2.addEventListener("click", diagEntregasClick);
 }
 function bindMisEntregasEvents() {
   const btnRef = document.getElementById("btnRefreshEntregas");

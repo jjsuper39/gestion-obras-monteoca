@@ -742,17 +742,20 @@ app.delete("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res
 });
 
 /* =============== MIS ENTREGAS A CUENTA (solo usuario logueado trabajador) =============== */
-// ✅ ENDPOINT ENTREGAS 100% INFALIBLE. NUNCA MÁS DEVUELVE 0 si HAY DATOS (incluso con NULLs):
+// ✅ ENDPOINT ENTREGAS 100% INFALIBLE (a prueba de IDs desincronizados / JWT incorrecto / NULL):
 app.get("/api/me/mis-entregas-cuenta", authMiddleware, handle(async (req, res) => {
-  const myId = String(req.user.trabajadorId || req.user.userId || "").trim();
-  const miNombre = String(req.user.nombre || "").toLowerCase();
+  // 1) Datos del JWT:
+  const jwtUserId = String(req.user.trabajadorId || req.user.userId || "").trim();
+  const jwtNombre = String(req.user.nombre || "").toLowerCase().trim();
   const miRol = String(req.user.role || "").toLowerCase();
-  if (!myId) return res.status(400).json({ error: "Usuario sin ID" });
-  console.log(`\n\n============================ [MIS ENTREGAS A CUENTA] ============================`);
-  console.log(`Petición entregas: userId=${myId}, nombre=${miNombre}, rol=${miRol}`);
+  console.log(`\n\n================ [MIS ENTREGAS - BUSCANDO QUÉ TRABAJADOR ES] ================`);
+  console.log(`JWT: userId=${jwtUserId} · nombre="${jwtNombre}" · rol=${miRol}`);
 
-  const todosMov = await dbAll(`SELECT * FROM movimientos ORDER BY fecha DESC, createdAt DESC`);
-  console.log(`[MIS ENTREGAS] Total movimientos en BBDD: ${todosMov.length}`);
+  // 2) Todos los trabajadores y movimientos BBDD REAL:
+  const trabajadores = await dbAll(`SELECT id, nombre, rol, activo FROM trabajadores ORDER BY id ASC;`);
+  const soloTrabajadores = trabajadores.filter(t => !(/admin|socio/i.test(String(t.rol || "").toLowerCase())));
+  const todosMov = await dbAll(`SELECT * FROM movimientos ORDER BY fecha DESC, createdAt DESC;`);
+  console.log(`BBDD: trabajadores=${trabajadores.length}, trabajadores NO admin=${soloTrabajadores.length}, movimientos totales=${todosMov.length}`);
 
   const esEntregaNomina = (m) => {
     if (!m) return false;
@@ -767,42 +770,60 @@ app.get("/api/me/mis-entregas-cuenta", authMiddleware, handle(async (req, res) =
     );
   };
 
-  let movs = [];
-  // PASO 1: Buscar exacto responsableId = myId (número o string):
-  movs = todosMov.filter(m => String(m.responsableId || "").trim() === myId || String(m.id || "") === myId);
-  if (movs.length > 0) console.log(`[MIS ENTREGAS] PASO 1 OK: ${movs.length} movimientos por responsableId=${myId}`);
-  // PASO 2: Si no, buscar por realizadoPorId (por si se intercambiaron):
-  if (movs.length === 0) {
-    movs = todosMov.filter(m => String(m.realizadoPorId || "").trim() === myId && esEntregaNomina(m));
-    if (movs.length > 0) console.log(`[MIS ENTREGAS] PASO 2 OK: ${movs.length} por realizadoPorId=${myId}`);
+  // =============== 3) DECIDIMOS: ¿Cuál es MI ID REAL en la tabla trabajadores? ===============
+  let miIdReal = null;
+  let miNombreReal = null;
+
+  // PASO A: Si SOLO HAY 1 TRABAJADOR (Kevin) en la BBDD -> ESE ERES TÚ SIN IMPORTAR NADA (incluso JWT id malo):
+  if (soloTrabajadores.length === 1) {
+    miIdReal = String(soloTrabajadores[0].id);
+    miNombreReal = soloTrabajadores[0].nombre;
+    console.log(`✅ MODO: SOLO 1 TRABAJADOR (${miNombreReal}). ID real = ${miIdReal}. Devuelvo TODAS las entregas nómina directamente.`);
   }
-  // PASO 3: Buscar por responsableId NULL Y es entrega de nómina (datos antiguos):
-  if (movs.length === 0) {
-    movs = todosMov.filter(m =>
-      (!m.responsableId || String(m.responsableId).trim() === "") && esEntregaNomina(m)
-    );
-    if (movs.length > 0) console.log(`[MIS ENTREGAS] PASO 3 OK: ${movs.length} por responsableId NULL y entrega nómina`);
+  // PASO B: Buscar POR NOMBRE (si hay varios trabajadores, encuentra el tuyo por nombre igual que login):
+  if (!miIdReal && jwtNombre) {
+    const t = trabajadores.find((x) => String(x.nombre || "").toLowerCase().trim() === jwtNombre);
+    if (t) {
+      miIdReal = String(t.id);
+      miNombreReal = t.nombre;
+      console.log(`✅ ENCONTRADO trabajador POR NOMBRE (JWT nombre="${jwtNombre}"): id=${miIdReal} nombre=${miNombreReal} rol=${t.rol}`);
+    }
   }
-  // PASO 4: SI SOLO HAY 1 TRABAJADOR EN LA BBDD, TODAS LAS ENTREGAS DE NÓMINA SON DE ÉL (para probar la app):
-  if (movs.length === 0 && miRol !== "admin") {
-    const trabajadores = await dbAll(`SELECT * FROM trabajadores WHERE activo = 1`);
-    const soloTrabajadores = trabajadores.filter(t => !(/admin|socio/i.test(String(t.rol || "").toLowerCase())));
-    if (soloTrabajadores.length === 1) {
-      movs = todosMov.filter(m => esEntregaNomina(m));
-      console.log(`[MIS ENTREGAS] PASO 4 OK: Único trabajador en BBDD. Cojo ${movs.length} entregas totales.`);
-    } else {
-      // PASO 5: Si hay varios trabajadores y su nombre aparece en el concepto:
-      movs = todosMov.filter(m => esEntregaNomina(m) && miNombre && String(m.concepto || "").toLowerCase().includes(miNombre));
-      if (movs.length > 0) console.log(`[MIS ENTREGAS] PASO 5 OK: ${movs.length} por nombre "${miNombre}" en concepto.`);
+  // PASO C: Fallback, por si lo encuentra por ID exacto (JWT id correcto):
+  if (!miIdReal && jwtUserId) {
+    const t = trabajadores.find(x => String(x.id) === jwtUserId);
+    if (t) {
+      miIdReal = String(t.id);
+      miNombreReal = t.nombre;
+      console.log(`✅ ENCONTRADO por ID JWT: id=${miIdReal} nombre=${miNombreReal}`);
     }
   }
 
-  const totalEnBase = todosMov.filter(esEntregaNomina).length;
-  console.log(`[MIS ENTREGAS] Total entregas nómina en BBDD: ${totalEnBase}. Devuelvo a la vista: ${movs.length}`);
-  console.log(`================================================================================\n`);
+  // =============== 4) COGEMOS LAS ENTREGAS NÓMINA ===============
+  let movs = [];
+  const entregasTodasNomina = todosMov.filter(esEntregaNomina);
+  console.log(`Total entregas nómina en BBDD (sin filtrar): ${entregasTodasNomina.length}`);
 
-  // Join con nombres de socio que entregó el dinero:
-  const tMap = {}; (await dbAll(`SELECT id, nombre FROM trabajadores`)).forEach(t => { tMap[String(t.id)] = t.nombre; });
+  // SI SOLO HAY 1 TRABAJADOR -> TODAS LAS ENTREGAS NÓMINA SON DE ESE TRABAJADOR (a prueba de balas):
+  if (soloTrabajadores.length === 1) {
+    movs = entregasTodasNomina;
+  } else {
+    // Hay VARIOS trabajadores: filtra por ID REAL encontrado (nombre o ID):
+    if (miIdReal) {
+      movs = entregasTodasNomina.filter(m => String(m.responsableId || "").trim() === miIdReal
+        || String(m.realizadoPorId || "").trim() === miIdReal  // por si realizó el pago él mismo
+        || (jwtNombre && String(m.concepto || "").toLowerCase().includes(jwtNombre))  // su nombre en el concepto
+      );
+    } else {
+      // No encontramos trabajador real (error JWT sin nombre). Último recurso: entregas sin asignar (responsableId NULL):
+      movs = entregasTodasNomina.filter(m => !m.responsableId || String(m.responsableId).trim() === "");
+    }
+  }
+  console.log(`ENTREGAS FINALES devueltas a la vista: ${movs.length}`);
+  console.log(`================================================================\n`);
+
+  // Nombres de socio (join):
+  const tMap = {}; trabajadores.forEach(t => { tMap[String(t.id)] = t.nombre; });
 
   const data = (movs || []).slice().sort((a,b) => String(b.fecha||"").localeCompare(String(a.fecha||"")) || (b.createdAt||"").localeCompare(a.createdAt||"")).map(m => ({
     id: m.id, fecha: m.fecha, tipo: String(m.tipo || ""),
@@ -818,9 +839,12 @@ app.get("/api/me/mis-entregas-cuenta", authMiddleware, handle(async (req, res) =
   const entregas = data.filter(d => d.tipo.toLowerCase() === "gasto").reduce((s,m) => s + m.importe, 0);
   const reembolsos = data.filter(d => d.tipo.toLowerCase() === "ingreso").reduce((s,m) => s + m.importe, 0);
   res.json({
-    myId,
+    myId: miIdReal || jwtUserId,
+    miNombre: miNombreReal || jwtNombre,
+    _soloHay1Trabajador: soloTrabajadores.length === 1,
+    _trabajadoresNoAdminTotal: soloTrabajadores.length,
     totalMovimientos: data.length,
-    _totalEntregasNominaBBDD: totalEnBase, // campo debug para ver en logs/frontend
+    _totalEntregasNominaBBDD: entregasTodasNomina.length,
     totalImporte: total,
     totalEntregasCuenta: entregas,
     totalReembolsos: reembolsos,
@@ -1030,6 +1054,90 @@ app.post("/api/arreglar-entregas-kevin", authMiddleware, requireAdmin, handle(as
     entregas_actualizadas_realizado: cuantosReal,
     total_entregas_nomina: entregasFinal.length,
     listado_entregas: entregasFinal,
+  });
+}));
+
+// ============================================================
+// 🧐 DIAGNÓSTICO ENTREGAS (ver TODO EN PANTALLA sin Render logs):
+//    - JWT usuario actual: id, nombre, rol
+//    - TODOS los trabajadores (id, nombre, rol)
+//    - TODAS las entregas nómina (responsableId, realizadoPorId)
+//    - Informe desincronización JWT vs trabajadores
+// ============================================================
+app.get("/api/diag/entregas-completo", authMiddleware, handle(async (req, res) => {
+  const jwt = {
+    userId: req.user?.userId || null,
+    trabajadorId: req.user?.trabajadorId || null,
+    nombre: req.user?.nombre || null,
+    rol: req.user?.role || null,
+    login: req.user?.login || null,
+    raw: JSON.stringify(req.user || {}, null, 2),
+  };
+  const trabajadores = await dbAll(`SELECT id, nombre, rol, pin, activo, fechaAlta FROM trabajadores ORDER BY id ASC;`);
+  const todosMov = await dbAll(`SELECT * FROM movimientos ORDER BY fecha DESC, createdAt DESC;`);
+  const esEntregaNomina = (m) => {
+    if (!m) return false;
+    const tipo = String(m.tipo || "").toLowerCase();
+    if (tipo !== "gasto") return false;
+    const cat = String(m.categoria || "").toLowerCase();
+    const conc = String(m.concepto || "").toLowerCase();
+    return (
+      cat.includes("nomin") || conc.includes("entrega") || conc.includes("anticipo") ||
+      conc.includes("nomina") || conc.includes("adelanto") || conc.includes("cuenta")
+    );
+  };
+  const entregasNomina = todosMov.filter(esEntregaNomina);
+  // Búsqueda trabajador ACTUAL por nombre (arreglar desincronización JWT id):
+  const miNombre = String(jwt.nombre || "").trim().toLowerCase();
+  const trabajadorPorNombre = miNombre
+    ? trabajadores.find((t) => String(t.nombre || "").trim().toLowerCase() === miNombre) || null
+    : null;
+  const soloTrabajadores = trabajadores.filter(t => !(/admin|socio/i.test(String(t.rol || "").toLowerCase())));
+  let informe = [];
+  informe.push(`🔑 Tu JWT (login token): userId=${jwt.userId}, trabajadorId=${jwt.trabajadorId}, nombre="${jwt.nombre}", rol=${jwt.rol}`);
+  if (trabajadorPorNombre) {
+    informe.push(`✅ ENCONTRADO trabajador POR NOMBRE "${jwt.nombre}" en la BBDD: id=${trabajadorPorNombre.id}, rol=${trabajadorPorNombre.rol}`);
+    if (String(trabajadorPorNombre.id) !== String(jwt.userId) && String(trabajadorPorNombre.id) !== String(jwt.trabajadorId)) {
+      informe.push(`🚨 ¡¡DESINCRONIZACIÓN DETECTADA!! Tu JWT tiene id=${jwt.userId || jwt.trabajadorId} pero el trabajador REAL en BBDD con tu nombre tiene id=${trabajadorPorNombre.id}. POR ESO NO VES LAS ENTREGAS (responsableId = id_real = ${trabajadorPorNombre.id} !== JWT id). SOLUCIÓN: El endpoint mis-entregas ya busca por nombre, así que te devolverá sus entregas aunque el JWT tenga id distinto.`);
+    }
+  } else if (miNombre) {
+    informe.push(`⚠️ No se encontró ningún trabajador con nombre="${jwt.nombre}" en la tabla trabajadores (${trabajadores.length} totales). Quizás el nombre del login no coincide exactamente con el nombre del trabajador (mayúsculas/minúsculas).`);
+  } else {
+    informe.push(`⚠️ JWT sin campo "nombre": no se puede buscar por nombre.`);
+  }
+  informe.push(`👷 Total trabajadores NO admin (socios excluidos) en BBDD: ${soloTrabajadores.length}`);
+  if (soloTrabajadores.length === 1) {
+    informe.push(`✅ SOLO HAY 1 TRABAJADOR EN LA BBDD: ${soloTrabajadores[0].nombre} (id=${soloTrabajadores[0].id}). El endpoint mis-entregas devuelve TODAS las entregas nómina directamente, sin importar responsableId. ESTO ES A PRUEBA DE FALLOS TOTAL.`);
+  }
+  informe.push(`💰 Total movimientos en BBDD: ${todosMov.length}. Entregas nómina (tipo gasto + concepto entrega/nómina): ${entregasNomina.length}.`);
+  entregasNomina.forEach((m, i) => {
+    const respT = trabajadores.find(t => String(t.id) === String(m.responsableId || ""));
+    const realT = trabajadores.find(t => String(t.id) === String(m.realizadoPorId || ""));
+    informe.push(`  Entrega #${i+1}: id=${m.id}, fecha=${m.fecha}, importe=${m.importe}€, concepto="${m.concepto}", responsableId=${m.responsableId || "NULL"} (${respT ? respT.nombre : "NO ENCONTRADO"}), realizadoPorId=${m.realizadoPorId || "NULL"} (${realT ? realT.nombre : "NO ENCONTRADO"})`);
+  });
+  res.json({
+    ok: true,
+    _generado: new Date().toISOString(),
+    jwt,
+    trabajadores,
+    total_movimientos: todosMov.length,
+    total_entregas_nomina: entregasNomina.length,
+    entregasNomina: entregasNomina.map(m => {
+      const respT = trabajadores.find(t => String(t.id) === String(m.responsableId || ""));
+      const realT = trabajadores.find(t => String(t.id) === String(m.realizadoPorId || ""));
+      return {
+        id: m.id, fecha: m.fecha, importe: Number(m.importe) || 0, concepto: m.concepto, categoria: m.categoria,
+        responsableId: m.responsableId || null, responsableNombre: respT ? respT.nombre : null,
+        realizadoPorId: m.realizadoPorId || null, realizadoPorNombre: realT ? realT.nombre : null,
+        createdAt: m.createdAt || null,
+      };
+    }),
+    encontradoTrabajadorPorNombre: trabajadorPorNombre ? {
+      id: trabajadorPorNombre.id, nombre: trabajadorPorNombre.nombre, rol: trabajadorPorNombre.rol
+    } : null,
+    soloHay1Trabajador: soloTrabajadores.length === 1 ? soloTrabajadores[0] : null,
+    informe_lineas: informe,
+    informe_texto: informe.join("\n\n"),
   });
 }));
 
