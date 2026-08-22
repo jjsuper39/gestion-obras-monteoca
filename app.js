@@ -2390,8 +2390,17 @@ async function onSubmitMovimiento(e) {
   const id = els.movimientoId.value || null;
   const elReal = document.getElementById("movimientoRealizadoPor");
   const _u = state.session?.user || null;
-  const yoId = (_u?.userId) || (_u?.trabajadorId) || null;
-  const realizadoPorId = (elReal?.value ? elReal.value : yoId) || null;
+  let yoId = (_u?.userId) || (_u?.trabajadorId) || null;
+  if (!yoId) {
+    const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
+    if (socioPrincipal) yoId = socioPrincipal.id;
+  }
+  let realizadoPorId = (elReal?.value ? elReal.value : yoId) || null;
+  if (!realizadoPorId || String(realizadoPorId).trim() === "") realizadoPorId = yoId || null;
+  if (!realizadoPorId) {
+    const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
+    if (socioPrincipal) realizadoPorId = socioPrincipal.id;
+  }
   const data = {
     id: id || undefined,
     fecha: els.movimientoFecha.value,
@@ -2876,9 +2885,18 @@ async function submitQuickMov() {
   const concepto = (els.qmConcepto.value || "").trim();
   if (!obraId || importe <= 0 || !concepto) return false;
   const _u = state.session?.user || null;
-  const yoId = (_u?.userId) || (_u?.trabajadorId) || null;
+  let yoId = (_u?.userId) || (_u?.trabajadorId) || null;
+  if (!yoId) {
+    const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
+    if (socioPrincipal) yoId = socioPrincipal.id;
+  }
   const _selReal = document.getElementById("qmRealizadoPor");
-  const realizadoPorId = (_selReal?.value ? _selReal.value : yoId) || null;
+  let realizadoPorId = (_selReal?.value ? _selReal.value : yoId) || null;
+  if (!realizadoPorId || String(realizadoPorId).trim() === "") realizadoPorId = yoId || null;
+  if (!realizadoPorId) {
+    const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
+    if (socioPrincipal) realizadoPorId = socioPrincipal.id;
+  }
   const data = {
     fecha: els.qmFecha.value || todayISO(),
     tipo,
@@ -3150,9 +3168,22 @@ function bindGeneralEvents() {
       try {
         setStatus(stEC, "⏳ Guardando entrega a cuenta...", false);
         const _u = state.session?.user || null;
-        const yoId = (_u?.userId) || (_u?.trabajadorId) || null;
+        let yoId = (_u?.userId) || (_u?.trabajadorId) || null;
+        // ✅ FIX MORTAL: SI NO HAY UN ID DEL USUARIO LOGUEADO, buscamos AL SOCIO/ADMIN PRINCIPAL en state.trabajadores:
+        if (!yoId) {
+          // Buscar al PRIMER trabajador con rol === "admin" o "socio" (normalmente Juanje):
+          const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
+          if (socioPrincipal) yoId = socioPrincipal.id;
+        }
         const _selRealizadoPor = document.getElementById("ecRealizadoPorId");
-        const realizadoPorId = (_selRealizadoPor?.value ? _selRealizadoPor.value : yoId) || null;
+        let realizadoPorId = (_selRealizadoPor?.value ? _selRealizadoPor.value : yoId) || null;
+        // ✅ SEGUNDA CAPA SI AÚN SIGUE VACÍO: si lo pone en "(Yo admin actual)" (valor string vacío "" -> cogemos YOID del usuario logueado):
+        if (!realizadoPorId || String(realizadoPorId).trim() === "") realizadoPorId = yoId || null;
+        // ✅ TERCERA CAPA SI AÚN SIGUE VACÍO: socio principal:
+        if (!realizadoPorId) {
+          const socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
+          if (socioPrincipal) realizadoPorId = socioPrincipal.id;
+        }
         const payload = {
           fecha: document.getElementById("ecFecha").value || todayISO(),
           tipo: "gasto",
@@ -3350,19 +3381,16 @@ function _setCajasLoadingUI(loadingMsg) {
 
 function renderCajasGlobalCards() {
   if (!isAdmin() || !els.cajasGlobalCards) return;
-  const d = state.cajasData?.saldos || [];
-  let totalIngresos = 0, totalGastos = 0, totalSocios = 0, totalSaldos = 0;
-  d.forEach((r) => {
-    if (r.rol === "admin") totalSocios++;
-    totalIngresos += r.ingresos || 0;
-    totalGastos += r.gastos || 0;
-    totalSaldos += r.saldo || 0;
-  });
+  const r = state.cajasData?.resumen || { totalSocios: 0, totalCobrado: 0, totalPagado: 0, netoTotalCajas: 0 };
+  const totalSocios = Number(r.totalSocios) || 0;
+  const totalCobrado = Number(r.totalCobrado) || 0;
+  const totalPagado = Number(r.totalPagado) || 0;
+  const netoTotal = Number(r.netoTotalCajas) || 0;
   const cards = [
-    { title: "👥 Socios / Responsables", value: `${totalSocios}`, cls: "stat-blue" },
-    { title: "📥 Ingresos Totales Periodo", value: formatMoney(totalIngresos), cls: "stat-green" },
-    { title: "📤 Gastos Totales Periodo", value: formatMoney(totalGastos), cls: "stat-red" },
-    { title: "💰 Saldos Cajas (Ing - Gast)", value: formatMoney(totalSaldos), cls: totalSaldos >= 0 ? "stat-purple" : "stat-orange" },
+    { title: "👥 Socios con caja activa", value: `${totalSocios}`, cls: "stat-blue" },
+    { title: "📥 Total Cobrado en cajas (Ingresos)", value: formatMoney(totalCobrado), cls: "stat-green" },
+    { title: "📤 Total Pagado / Sacado de cajas", value: formatMoney(totalPagado), cls: "stat-red" },
+    { title: "💰 SALDO NETO TOTAL CAJAS (Cobrado - Pagado)", value: formatMoney(netoTotal), cls: netoTotal >= 0 ? "stat-purple" : "stat-orange" },
   ];
   els.cajasGlobalCards.innerHTML = cards.map(c =>
     `<div class="stat-card ${c.cls}"><h3>${c.title}</h3><p class="stat-value">${c.value}</p></div>`
@@ -3370,7 +3398,7 @@ function renderCajasGlobalCards() {
 }
 function renderCajasSaldosTable() {
   if (!isAdmin() || !els.cajasSaldosTable) return;
-  const d = state.cajasData?.saldos || [];
+  const d = state.cajasData?.saldosNomina || [];
   const tbody = els.cajasSaldosTable.querySelector("tbody");
   if (!tbody) return;
   if (d.length === 0) {
@@ -3379,15 +3407,18 @@ function renderCajasSaldosTable() {
   }
   const selId = state.filtros.cajas.selectedTrabajadorId;
   tbody.innerHTML = d.map((r) => {
-    const isSel = selId === r.trabajadorId ? "selected" : "";
-    const rolBadge = r.rol === "admin" ? `<span class="role-badge admin" style="margin:0">👑 Socio</span>` : `<span class="role-badge worker" style="margin:0">👷 Trab.</span>`;
-    const saldoCls = (r.saldo || 0) >= 0 ? "text-green" : "text-red";
-    return `<tr data-trabajador="${r.trabajadorId}" class="${isSel}" style="cursor:pointer">
+    const isSel = selId === r.id ? "selected" : "";
+    const rolBadge = String(r.rol || "").toLowerCase() === "admin" || String(r.rol || "").toLowerCase() === "socio"
+      ? `<span class="role-badge admin" style="margin:0">👑 ${escapeHtml(r.rol || "Socio")}</span>`
+      : `<span class="role-badge worker" style="margin:0">👷 ${escapeHtml(r.rol || "Trab.")}</span>`;
+    const neto = Number(r.netoPendiente) || 0;
+    const saldoCls = neto >= 0 ? "text-green" : "text-red";
+    return `<tr data-trabajador="${r.id}" class="${isSel}" style="cursor:pointer">
       <td><strong>${escapeHtml(r.nombre)}</strong></td>
       <td>${rolBadge}</td>
-      <td class="text-green">${formatMoney(r.ingresos || 0)}</td>
-      <td class="text-red">${formatMoney(r.gastos || 0)}</td>
-      <td class="${saldoCls}"><strong>${formatMoney(r.saldo || 0)}</strong></td>
+      <td class="text-green">${formatMoney(Number(r.reembolsosTrabajador) || 0)}</td>
+      <td class="text-red">${formatMoney(Number(r.entregasCuentaTrabajador) || 0)}</td>
+      <td class="${saldoCls}"><strong>${neto >= 0 ? "+" : ""}${formatMoney(neto)}</strong></td>
       <td class="text-muted">${r.numMov || 0}</td>
     </tr>`;
   }).join("");
@@ -3398,9 +3429,9 @@ function renderCajasSaldosTable() {
       if (els.cajasSelectedInfo) {
         if (state.filtros.cajas.selectedTrabajadorId) {
           const t = getTrabajadorById(state.filtros.cajas.selectedTrabajadorId);
-          els.cajasSelectedInfo.textContent = `🔍 Filtrando movimientos de: ${t?.nombre || "?"}. Pulsa otra vez para quitar filtro.`;
+          els.cajasSelectedInfo.textContent = `🔍 Filtrando entregas a cuenta / movimientos de: ${t?.nombre || "?"}. Pulsa otra vez para quitar filtro.`;
         } else {
-          els.cajasSelectedInfo.textContent = "Pulsa una fila para ver los movimientos de esa caja";
+          els.cajasSelectedInfo.textContent = "Pulsa una fila para ver los movimientos / entregas a cuenta de ese trabajador (ver nómina)";
         }
       }
       renderCajasMovimientos();
@@ -3409,62 +3440,43 @@ function renderCajasSaldosTable() {
     });
   });
 }
-// ✅ NUEVA: Saldos de CAJA PERSONAL por Socio/Admin (lo que realmente paga o cobra cada socio de su bolsillo)
+// ✅ TABLA PRINCIPAL NUEVA: 💵 CAJAS FÍSICAS POR SOCIO (Juanje cobró 6000, pagó 90 entrega Kevin, Saldo Juanje = 5910 € ✅):
 function renderCajasSociosTable() {
   if (!isAdmin()) return;
   const tbl = document.getElementById("cajasSociosTable");
   if (!tbl) return;
   const tbody = tbl.querySelector("tbody");
   if (!tbody) return;
-  // Agrupar por realizadoPorId:
-  const { desde, hasta } = state.filtros.cajas || {};
-  let movs = [...(state.movimientos || [])];
-  if (desde) movs = movs.filter((m) => (m.fecha || "") >= desde);
-  if (hasta) movs = movs.filter((m) => (m.fecha || "") <= hasta);
-  // Solo movimientos que TIENEN socio asignado (realizadoPorId):
-  const agrupado = {};
-  movs.forEach((m) => {
-    if (!m.realizadoPorId) return;
-    if (!agrupado[m.realizadoPorId]) {
-      agrupado[m.realizadoPorId] = { trabajadorId: m.realizadoPorId, ingresos: 0, gastos: 0, numMov: 0 };
-    }
-    agrupado[m.realizadoPorId].numMov++;
-    if (String(m.tipo || "").toLowerCase() === "ingreso") agrupado[m.realizadoPorId].ingresos += Number(m.importe) || 0;
-    else agrupado[m.realizadoPorId].gastos += Number(m.importe) || 0;
-  });
-  const filas = Object.values(agrupado).map((r) => {
-    const t = getTrabajadorById(r.trabajadorId);
-    return {
-      ...r,
-      nombre: t?.nombre || `(Socio ID: ${String(r.trabajadorId).slice(0,6)}...)`,
-      rol: t?.rol || (t?.id ? "socio" : "desconocido"),
-      saldo: (r.ingresos || 0) - (r.gastos || 0),
-    };
-  }).sort((a,b) => String(b.nombre || "").localeCompare(a.nombre || ""));
-  // Añadimos los socios/admins que NO tengan movimientos aun (saldos 0):
-  (state.trabajadores || []).forEach(t => {
-    if (String(t.rol || "").toLowerCase() === "admin" || String(t.rol || "").toLowerCase() === "socio") {
-      if (!filas.some(x => x.trabajadorId === t.id)) filas.push({
-        trabajadorId: t.id,
-        nombre: t.nombre,
-        rol: t.rol || "socio",
-        ingresos: 0, gastos: 0, saldo: 0, numMov: 0,
-      });
-    }
-  });
-  if (filas.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty">Sin movimientos por socio. 💡 Pulsa 💸 Entrega a Cuenta en 👷 Trabajadores y se verá aquí la salida de TU caja (socio).</td></tr>`;
+  const filas = state.cajasData?.cajasSocios || [];
+  // Asegurarse de NO mezclar trabajadores aquí (solo socios/admins). Si vienen trabajadores por algo los filtramos:
+  const soloSocios = filas.filter(r => String(r.rol || "").toLowerCase() === "admin" || String(r.rol || "").toLowerCase() === "socio");
+  // Si el admin NO tiene rol en su ficha de trabajadores -> lo añadimos manualmente (por si acaso):
+  if (soloSocios.length === 0 && (state.trabajadores || []).length) {
+    (state.trabajadores || []).forEach(t => {
+      if (String(t.rol || "").toLowerCase() === "admin" || String(t.rol || "").toLowerCase() === "socio") {
+        soloSocios.push({
+          id: t.id, nombre: t.nombre, rol: t.rol || "socio",
+          cobradoCaja: 0, pagadoCaja: 0, saldoCaja: 0, numMov: 0,
+        });
+      }
+    });
+  }
+  if (soloSocios.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">⚠️ No tienes SOCIOS/ADMINS creados en la pestaña 👷 Trabajadores. Crea a Juanje (o a ti mismo) con rol = "admin" o "socio" para ver su caja. Luego, al cobrar o pagar, selecciona su nombre en "Entregado/Cobrado Por" y aparecerá su saldo (ej: Juanje cobra 6000, entrega 90 Kevin → Saldo Juanje = 5910 €)</td></tr>`;
     return;
   }
-  tbody.innerHTML = filas.map(r => {
-    const rolBadge = r.rol === "admin" ? `<span class="role-badge admin" style="margin:0">👑 Socio</span>` : `<span class="role-badge worker" style="margin:0">👷 ${escapeHtml(r.rol || "—")}</span>`;
-    const saldoCls = (r.saldo || 0) >= 0 ? "text-green" : "text-red";
+  tbody.innerHTML = soloSocios.map(r => {
+    const rolBadge = String(r.rol || "").toLowerCase() === "socio"
+      ? `<span class="role-badge admin" style="margin:0">👑 Socio</span>`
+      : `<span class="role-badge admin" style="margin:0">👑 ${escapeHtml(r.rol || "Admin/Socio")}</span>`;
+    const saldo = Number(r.saldoCaja) || 0;
+    const saldoCls = saldo >= 0 ? "text-green" : "text-red";
     return `<tr style="background:#fff;">
       <td><strong style="color:#6b21a8;">${escapeHtml(r.nombre || "")}</strong></td>
       <td>${rolBadge}</td>
-      <td class="text-green">${formatMoney(r.ingresos || 0)}</td>
-      <td class="text-red">${formatMoney(r.gastos || 0)}</td>
-      <td class="${saldoCls}"><strong>${formatMoney(r.saldo || 0)}</strong></td>
+      <td class="text-green">${formatMoney(Number(r.cobradoCaja) || 0)}</td>
+      <td class="text-red">${formatMoney(Number(r.pagadoCaja) || 0)}</td>
+      <td class="${saldoCls}"><strong>${saldo >= 0 ? "+" : ""}${formatMoney(saldo)}</strong></td>
       <td class="text-muted">${r.numMov || 0}</td>
     </tr>`;
   }).join("");

@@ -608,19 +608,19 @@
 
       <div class="panel">
         <div class="panel-head">
-          <h3>📋 Saldos por Trabajador / Socio</h3>
-          <p class="hint" id="cajasSelectedInfo">Pulsa una fila para ver los movimientos de esa caja</p>
+          <h3>👷 Liquidación Trabajadores (Entregas a Cuenta / Adelantos Nómina)</h3>
+          <p class="hint" id="cajasSelectedInfo">Pulsa una fila para ver los movimientos / entregas a cuenta de ese trabajador (ver nómina)</p>
         </div>
         <div class="table-responsive">
           <table class="table" id="cajasSaldosTable">
             <thead>
               <tr>
-                <th>👷 Nombre</th>
+                <th>👷 Trabajador</th>
                 <th>🎖️ Rol</th>
-                <th>📥 Ingresos Periodo</th>
-                <th>📤 Gastos Periodo</th>
-                <th>💰 Saldo Actual Caja</th>
-                <th>🧾 Nº Movimientos</th>
+                <th>🔙 Reembolsos / Ingresos a favor</th>
+                <th>💸 Entregas a Cuenta (Ya cobrados por el Trab.)</th>
+                <th>🧾 Neto Pendiente (Reemb - Entregas)</th>
+                <th>🧾 Nº apuntes nómina</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -630,8 +630,8 @@
 
       <div class="panel" style="border-color:#a855f7;background:#faf5ff;">
         <div class="panel-head" style="border-bottom-color:#e9d5ff;">
-          <h3 style="color:#6b21a8;">👑 Saldos CAJAS PERSONALES SOCIOS (¿Qué paga/cobra cada socio de SU caja?)</h3>
-          <p class="hint">👉 Aquí ves los adelantos que TÚ entregaste de TU CAJA a los trabajadores (saldo disminuye tuyo, aumenta del trabajador).</p>
+          <h3 style="color:#6b21a8;">💵 CAJAS FÍSICAS POR SOCIO (Saldo de caja de cada socio que gestiona dinero de la EMPRESA)</h3>
+          <p class="hint">👉 MUY IMPORTANTE: Esta es LA CAJA REAL. Cada socio tiene un dinero para la empresa. INGRESOS = lo cobró en su caja de clientes, GASTOS = sacó de su caja para pagar (ej entrega Kevin 90€). Saldo = Dinero REAL que tiene para empresa en cada socio. EJEMPLO: Juanje cobra 6000 entrega 90 a Kevin, SALDO JUANJE = 5910€ 💰✅ )</p>
         </div>
         <div class="table-responsive">
           <table class="table" id="cajasSociosTable">
@@ -639,10 +639,10 @@
               <tr>
                 <th>👑 Socio / Admin</th>
                 <th>🎖️ Rol</th>
-                <th>📥 Cobró en su Caja (Ingresos atribuidos)</th>
-                <th>📤 Pagó desde su Caja (Gastos atribuidos)</th>
-                <th>💰 Saldo Real Caja Personal (Cobró - Pagó)</th>
-                <th>🧾 Nº Movimientos</th>
+                <th>📥 Cobró en su Caja Física</th>
+                <th>📤 Sacó / Pagó de su Caja Física</th>
+                <th>💰 SALDO REAL CAJA (Cobró - Pagó)</th>
+                <th>🧾 Nº movimientos en su caja</th>
               </tr>
             </thead>
             <tbody></tbody>

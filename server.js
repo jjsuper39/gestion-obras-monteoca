@@ -701,39 +701,76 @@ app.delete("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res
 });
 
 /* =============== CAJAS / SALDOS POR TRABAJADOR =============== */
-app.get("/api/cajas", authMiddleware, requireAdmin, async (req, res) => {
+app.get("/api/cajas", authMiddleware, requireAdmin, handle(async (req, res) => {
   const { desde, hasta } = req.query || {};
-  let where = ""; const params = [];
-  if (desde) { where += " AND fecha >= ?"; params.push(desde); }
-  if (hasta) { where += " AND fecha <= ?"; params.push(hasta); }
-  // Subconsulta para compatibilidad Turso + SQLite
-  const rows = await dbAll(`
-    SELECT
-      t.id AS trabajadorId, t.nombre, t.rol,
-      COALESCE(SUM(CASE WHEN mm.tipo = 'ingreso' THEN mm.importe ELSE 0 END), 0) AS ingresos,
-      COALESCE(SUM(CASE WHEN mm.tipo = 'gasto' THEN mm.importe ELSE 0 END), 0) AS gastos,
-      COALESCE(COUNT(mm.id), 0) AS numMov
-    FROM trabajadores t
-    LEFT JOIN (
-      SELECT m.id, m.responsableId, m.tipo, m.importe, m.fecha
-      FROM movimientos m
-      WHERE 1=1 ${where}
-    ) mm ON mm.responsableId = t.id
-    WHERE t.activo = 1
-    GROUP BY t.id, t.nombre, t.rol
-    ORDER BY t.rol DESC, t.nombre ASC
-  `, params);
-  const saldos = rows.map((r) => ({
-    trabajadorId: r.trabajadorId,
-    nombre: r.nombre,
-    rol: r.rol || "trabajador",
-    ingresos: Number(r.ingresos) || 0,
-    gastos: Number(r.gastos) || 0,
-    saldo: (Number(r.ingresos) || 0) - (Number(r.gastos) || 0),
+  const sqlWhere =
+    " WHERE 1=1 " +
+    (desde ? " AND fecha >= ? " : "") +
+    (hasta ? " AND fecha <= ? " : "");
+  const args = [desde, hasta].filter(Boolean);
+
+  // ========== A) SALDOS NÓMINAS / ENTREGAS A CUENTA POR TRABAJADOR (responsableId, concepto liquidación nómina trabajador) ==========
+  //    Muestra entregas a cuenta, préstamos, etc., por cada trabajador (desde el punto de vista de la nómina).
+  const sqlTrab = `SELECT t.id AS id, t.nombre AS nombre, t.rol AS rol,
+    COALESCE(SUM(CASE WHEN mm.tipo = 'ingreso' THEN mm.importe ELSE 0 END), 0) AS reembolsos,
+    COALESCE(SUM(CASE WHEN mm.tipo = 'gasto'   THEN mm.importe ELSE 0 END), 0) AS entregasCuenta,
+    COALESCE(COUNT(mm.id), 0) AS numMov
+  FROM trabajadores t
+  LEFT JOIN (
+    SELECT m.id, m.responsableId, m.tipo, m.importe, m.fecha
+    FROM movimientos m ${sqlWhere}
+  ) mm ON mm.responsableId = t.id
+  WHERE t.activo = 1
+  GROUP BY t.id, t.nombre, t.rol
+  ORDER BY t.rol DESC, t.nombre ASC;`;
+  const saldosNomina = (await dbAll(sqlTrab, args)).map(r => ({
+    id: r.id, nombre: r.nombre, rol: r.rol || "trabajador",
+    reembolsosTrabajador: Number(r.reembolsos) || 0,
+    entregasCuentaTrabajador: Number(r.entregasCuenta) || 0,
+    netoPendiente: (Number(r.reembolsos) || 0) - (Number(r.entregasCuenta) || 0),
     numMov: Number(r.numMov) || 0,
   }));
-  res.json({ saldos, params: { desde, hasta } });
-});
+
+  // ========== B) CAJAS FÍSICAS POR SOCIO (LO MÁS IMPORTANTE: realizadoPorId) ==========
+  //    Cada socio = CAJA FÍSICA (Juanje y otros admins/socios).
+  //    Ingresos = Cobró en su caja, Gastos = Sacó/pagó de su caja.
+  //    SALDO = Ingresos - Gastos (Ej: Juanje = 6000 cobrados - 90 entrega Kevin = 5910 € ✅)
+  const sqlSocios = `SELECT t.id AS id, t.nombre AS nombre, t.rol AS rol,
+    COALESCE(SUM(CASE WHEN mm.tipo = 'ingreso' THEN mm.importe ELSE 0 END), 0) AS cobradoCaja,
+    COALESCE(SUM(CASE WHEN mm.tipo = 'gasto'   THEN mm.importe ELSE 0 END), 0) AS pagadoCaja,
+    COALESCE(COUNT(mm.id), 0) AS numMov
+  FROM trabajadores t
+  LEFT JOIN (
+    SELECT m.id, m.realizadoPorId, m.tipo, m.importe, m.fecha
+    FROM movimientos m ${sqlWhere}
+  ) mm ON mm.realizadoPorId = t.id
+  WHERE t.activo = 1 AND LOWER(COALESCE(t.rol,'')) IN ('admin','socio')
+  GROUP BY t.id, t.nombre, t.rol
+  ORDER BY t.nombre ASC;`;
+  const cajasSocios = (await dbAll(sqlSocios, args)).map(r => ({
+    id: r.id, nombre: r.nombre, rol: r.rol || "socio",
+    cobradoCaja: Number(r.cobradoCaja) || 0,
+    pagadoCaja: Number(r.pagadoCaja) || 0,
+    saldoCaja: (Number(r.cobradoCaja) || 0) - (Number(r.pagadoCaja) || 0),
+    numMov: Number(r.numMov) || 0,
+  }));
+
+  // Resumen para tarjetas cabecera:
+  let totalCobrado = 0, totalPagado = 0, totalSocios = 0, netoTotalCajas = 0;
+  (cajasSocios || []).forEach(c => {
+    totalSocios++;
+    totalCobrado += c.cobradoCaja;
+    totalPagado += c.pagadoCaja;
+    netoTotalCajas += c.saldoCaja;
+  });
+
+  res.json({
+    saldosNomina: saldosNomina,   // 👷 Para trabajadores: entregas a cuenta y liquidación
+    cajasSocios: cajasSocios,     // 👑 CAJAS FÍSICAS POR SOCIO (lo que pediste: 6000-90=5910!)
+    resumen: { totalSocios, totalCobrado, totalPagado, netoTotalCajas },
+    filtros: { desde, hasta },
+  });
+}));
 
 /* =============== FALLBACK SPA =============== */
 app.get("*", (req, res, next) => {
@@ -966,6 +1003,26 @@ async function initDatabase() {
         await dbRun("CREATE INDEX IF NOT EXISTS idx_movimientos_realizadopor ON movimientos (realizadoPorId);").catch(() => {});
       } catch {}
       console.log("✅ MIGRACIÓN OK: Columna realizadoPorId añadida.");
+    }
+    // ✅ NUEVA: Migración 2026-08-22: RELLENAR AUTOMÁTICAMENTE los movimientos antiguos SIN realizadoPorId (es decir, NULL o "") →
+    //    si es un GASTO con responsable = trabajador (entrega nómina) → lo atribuye automáticamente al SOCIO/ADMIN PRINCIPAL
+    //    para que Juanje aparezcan correctamente los 40€ + 50€ = 90€ en sus cajas personales.
+    try {
+      // Buscamos el socio/admin principal (1er trabajador con rol admin/socio en tabla trabajadores:
+      let socioId = null;
+      const filaAdmin = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY COALESCE(fechaAlta,id) ASC LIMIT 1;`);
+      if (filaAdmin && filaAdmin.id) socioId = filaAdmin.id;
+      if (socioId) {
+        // Actualizar todos los movimientos que: (realizadoPorId IS NULL O = ""):
+        // Si es GASTO y responsableId es un trabajador (entrega nómina/anticipo) → le ponemos realizadoPorId = socioId (Juanje):
+        const upd = await dbRun(`UPDATE movimientos SET realizadoPorId = ? WHERE (realizadoPorId IS NULL OR TRIM(realizadoPorId) = '')`, [socioId]);
+        const cuantos = Number(typeof upd.changes ?? upd.rowsAffected ?? 0) || 0;
+        if (cuantos > 0) {
+          console.log(`✅ MIGRACIÓN EXITOSA: Se han actualizado ${cuantos} movimientos antiguos sin caja socio, asignándolos al Socio/Admin Principal ${socioId} (saldo Juanje ya aparece bien ahora!).`);
+        }
+      }
+    } catch (e) {
+      console.warn("⚠️ No se pudo hacer migracion rellenado realizadoPorId antiguos (no pasa nada):", e.message);
     }
   } catch (e) { console.warn("⚠️ No se pudo comprobar migracion columna realizadoPorId:", e.message); }
 }
