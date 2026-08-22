@@ -742,18 +742,40 @@ app.delete("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res
 });
 
 /* =============== MIS ENTREGAS A CUENTA (solo usuario logueado trabajador) =============== */
-// ✅ ENDPOINT NUEVO: trabajador (o admin) logueado ve SUS entregas a cuenta (responsableId = yo)
-//    NO requiere admin, así que funciona para el login de Kevin.
+// ✅ ENDPOINT ENTREGAS TRABAJADOR: MUY TOLERANTE A NULLs (no se pierden entregas aunque responsableId esté vacío)
 app.get("/api/me/mis-entregas-cuenta", authMiddleware, handle(async (req, res) => {
   // Sacamos id del trabajador que hizo login (JWT):
   const myId = String(req.user.trabajadorId || req.user.userId || "").trim();
   if (!myId) return res.status(400).json({ error: "Usuario sin ID" });
-  const movs = await dbAll(`SELECT m.id, m.fecha, m.tipo, m.importe, m.concepto, m.notas, m.obraId,
+  // =============== PASO 1: BÚSQUEDA NORMAL (responsableId = yo, campo correcto) ===============
+  let movs = await dbAll(`SELECT m.id, m.fecha, m.tipo, m.importe, m.concepto, m.notas, m.obraId, m.categoria,
     m.realizadoPorId, t.nombre AS nombreEntregadoPor
     FROM movimientos m
     LEFT JOIN trabajadores t ON t.id = m.realizadoPorId
     WHERE m.responsableId = ?
     ORDER BY m.fecha DESC, m.createdAt DESC;`, [myId]);
+  // =============== PASO 2: SI NO HABÍA NADA (movs.length=0), BUSCAR ENTREGAS AÚN ASIGNADAS (NULL) ===============
+  // Esto pasa con datos antiguos que guardaron responsableId = NULL (antes de las correcciones):
+  if (!Array.isArray(movs) || movs.length === 0) {
+    movs = await dbAll(`SELECT m.id, m.fecha, m.tipo, m.importe, m.concepto, m.notas, m.obraId, m.categoria,
+      m.realizadoPorId, t.nombre AS nombreEntregadoPor
+      FROM movimientos m
+      LEFT JOIN trabajadores t ON t.id = m.realizadoPorId
+      WHERE LOWER(COALESCE(m.tipo,'')) = 'gasto'
+      AND (
+        LOWER(COALESCE(m.categoria,'')) LIKE '%nomin%'
+        OR LOWER(COALESCE(m.concepto,'')) LIKE '%entrega%'
+        OR LOWER(COALESCE(m.concepto,'')) LIKE '%anticipo%'
+        OR LOWER(COALESCE(m.concepto,'')) LIKE '%nomina%'
+        OR LOWER(COALESCE(m.concepto,'')) LIKE '%adelanto%'
+        OR LOWER(COALESCE(m.concepto,'')) LIKE '%cuenta%'
+      )
+      AND (
+        m.responsableId IS NULL
+        OR TRIM(COALESCE(m.responsableId,'')) = ''
+      )
+      ORDER BY m.fecha DESC, m.createdAt DESC;`);
+  }
   const data = (movs || []).map(m => ({
     id: m.id, fecha: m.fecha, tipo: String(m.tipo || ""),
     importe: Number(m.importe) || 0,
@@ -770,8 +792,8 @@ app.get("/api/me/mis-entregas-cuenta", authMiddleware, handle(async (req, res) =
     myId,
     totalMovimientos: data.length,
     totalImporte: total,
-    totalEntregasCuenta: entregas,   // 💸 Los adelantos que le han dado (tipo gasto, responsable = yo)
-    totalReembolsos: reembolsos,     // 🔙 Lo que le debe la empresa o reemb.
+    totalEntregasCuenta: entregas,
+    totalReembolsos: reembolsos,
     netoPendienteConTrabajador: reembolsos - entregas,
     entregas: data,
   });

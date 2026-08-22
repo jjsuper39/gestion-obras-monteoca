@@ -629,7 +629,6 @@
             <button type="button" class="btn ghost" id="btnCajasMesActual">📅 Este Mes</button>
             <button type="button" class="btn ghost" id="btnCajasTodo">🗓️ TODO</button>
             <button type="button" class="btn primary" id="btnCajasRefresh">🔄 Actualizar</button>
-            <button type="button" class="btn" id="btnRepararCajasDirecto" style="background:#ecfdf5;color:#047857;border-color:#a7f3d0;font-weight:bold;">🔧 <strong>REPARAR CAJAS</strong> (Cobró/Pagó = 0?)</button>
           </div>
         </div>
       </div>
@@ -737,7 +736,7 @@
       <div class="subtab-content" id="subtab-general" style="display:block;">
         <div class="panel">
           <div class="panel-head">
-            <h2>⚙️ Ajustes Generales</h2>
+            <h2>⚙️ Ajustes Generales (PIN + Backup + Borrar Todo)</h2>
           </div>
           <div class="form-grid">
             <div>
@@ -758,12 +757,10 @@
           </div>
           <p id="ajustesStatus" class="status" style="margin-top:.8rem;"></p>
         </div>
-      </div>
-
-      <div class="subtab-content hidden" id="subtab-datos">
-        <div class="panel">
+        <!-- ============ 📂 GESTIÓN DATOS (BACKUP / BORRAR TODO) AHORA AQUÍ (1ª PESTAÑA, NO BUSCAR) ============ -->
+        <div class="panel" style="margin-top:1.2rem;">
           <div class="panel-head">
-            <h2>📂 Gestión de Datos</h2>
+            <h2>📂 Copias de Seguridad + Borrar Datos</h2>
           </div>
           <div class="actions">
             <button class="btn" id="btnRestaurarBackupAuto" style="background:#d97706;color:white;border-color:#b45309;font-weight:bold;" title="Recupera el último backup automático que el servidor guardó antes de borrar/reiniciar">🔙 <strong>Recuperar Último Backup Automático</strong></button>
@@ -787,6 +784,15 @@
             <strong style="color:#9a3412;">🚨 Por qué mis datos volvían aunque borraba la base de datos?</strong>
             <p style="margin:.4rem 0 0;">Si tu app está en Render.com con BBDD Turso: la BBDD REAL está <strong>EN LA NUBE (3 réplicas en Europa)</strong>. Borrar el archivo <code>.db</code> local o reiniciar Render NO borra NADA (es una protección para NO perder datos reales de nóminas/obras). Usa el botón <strong>⚠️ BORRAR TODO (Incluido Nube Turso)</strong> de arriba para borrar de VERDAD y desaparecerán las obras "fantasma".</p>
           </div>
+        </div>
+      </div>
+
+      <div class="subtab-content hidden" id="subtab-datos">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>📂 Gestión de Datos (movido arriba)</h2>
+          </div>
+          <p class="hint" style="font-size:1.1em;">👉 Toda la gestión de datos (Copias de Seguridad + Borrar Todo) se ha movido a la <strong>1ª pestaña ⚙️ Ajustes Generales (PIN + Backup + Borrar Todo)</strong>, justo encima de aquí, para que <strong>NO TENGAS QUE BUSCAR SUBTABS</strong>. Ve ahí directamente y lo verás todo junto al PIN admin.</p>
         </div>
       </div>
 
