@@ -680,7 +680,7 @@ app.post("/api/movimientos", authMiddleware, requireAdmin, async (req, res) => {
   }
   // Capa 4: si SIGUE vacío, ponemos SOCIO PRINCIPAL:
   if (!realizadoPorId) {
-    const fila = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY COALESCE(fechaAlta,id) ASC LIMIT 1;`);
+    const fila = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
     if (fila?.id) realizadoPorId = fila.id;
   }
   try {
@@ -712,7 +712,7 @@ app.put("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res) =
   // Si sigue vacío -> JWT admin o socio principal:
   if (!realizadoPorId && req.user?.role === "admin") realizadoPorId = String(req.user.userId || req.user.trabajadorId || "").trim() || null;
   if (!realizadoPorId) {
-    const fila = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY COALESCE(fechaAlta,id) ASC LIMIT 1;`);
+    const fila = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
     if (fila?.id) realizadoPorId = fila.id;
   }
   merged.realizadoPorId = realizadoPorId;
@@ -844,7 +844,7 @@ app.get("/api/cajas", authMiddleware, requireAdmin, handle(async (req, res) => {
 app.post("/api/cajas/reparar", authMiddleware, requireAdmin, handle(async (req, res) => {
   let corregidos = 0;
   let socioId = null;
-  const filaAdmin = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY COALESCE(fechaAlta,id) ASC LIMIT 1;`);
+  const filaAdmin = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
   if (filaAdmin && filaAdmin.id) socioId = filaAdmin.id;
 
   if (socioId) {
@@ -1113,7 +1113,7 @@ async function initDatabase() {
     try {
       // Buscamos el socio/admin principal (1er trabajador con rol admin/socio en tabla trabajadores:
       let socioId = null;
-      const filaAdmin = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY COALESCE(fechaAlta,id) ASC LIMIT 1;`);
+      const filaAdmin = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
       if (filaAdmin && filaAdmin.id) socioId = filaAdmin.id;
       if (socioId) {
         // Actualizar todos los movimientos que: (realizadoPorId IS NULL O = ""):
