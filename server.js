@@ -454,8 +454,20 @@ app.post("/api/backup/restaurar-ultimo-automatico", authMiddleware, requireAdmin
 });
 
 app.post("/api/backup/restaurar", authMiddleware, requireAdmin, async (req, res) => {
-  const { trabajadores, obras, horas, movimientos, settings } = req.body || {};
+  const { trabajadores, obras, horas, movimientos, settings, esBorradoTotal, masterPin } = req.body || {};
   if (!Array.isArray(trabajadores) || !Array.isArray(obras)) return res.status(400).json({ error: "Backup inválido" });
+  const PIN_MAESTRO_BORRADO = "1285";
+  // ✅ 🔐 PROTECCIÓN BORRADO TOTAL: si intentan borrar TODO (esBorradoTotal=true) y arrays vacíos, se REQUIERE masterPin=1285:
+  const intentoBorrarTodo = Boolean(esBorradoTotal) || (
+    Array.isArray(trabajadores) && trabajadores.length === 0 &&
+    Array.isArray(obras) && obras.length === 0 &&
+    Array.isArray(horas) && horas.length === 0 &&
+    Array.isArray(movimientos) && movimientos.length === 0
+  );
+  if (intentoBorrarTodo && String(masterPin || "").trim() !== PIN_MAESTRO_BORRADO) {
+    console.error(`🚨[SEGURIDAD] Intento de BORRADO TOTAL SIN PIN MAESTRO CORRECTO. user=${req.user.userId || req.user.role}`);
+    return res.status(403).json({ error: "🔐 CONTRASEÑA MAESTRA INCORRECTA. No tienes permiso para borrar TODOS los datos. Introduce la contraseña correcta en el panel de Ajustes → Datos (PIN = 1285)." });
+  }
   try {
     // ✅ PROTECCIÓN ANTES DE BORRAR NADA: guardar backup automático del estado actual
     await guardarBackupAutomatico("pre_restaurar_usuario_" + Date.now());

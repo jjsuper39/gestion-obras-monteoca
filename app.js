@@ -1839,6 +1839,19 @@ function renderObras() {
     const li = document.createElement("li");
     li.className = "item";
     li.style.borderLeftColor = o.estado === "curso" ? "#ea580c" : o.estado === "finalizada" ? "#16a34a" : "#94a3b8";
+    li.style.cursor = "pointer"; // Se ve que es clickable
+    li.title = "Pulsar para ver DETALLES COMPLETOS de la obra";
+    // 👉 Click en CUALQUIER PARTE de la tarjeta (menos en botones acciones) abre el detalle:
+    li.addEventListener("click", (ev) => {
+      const esBotonAccion = ev.target && (
+        ev.target.closest("button") ||
+        ev.target.closest("[data-edit-obra]") ||
+        ev.target.closest("[data-del-obra]") ||
+        ev.target.closest("[data-quick-mov]")
+      );
+      if (esBotonAccion) return; // No abrir detalle si pulsó botón de acción
+      abrirDetalleObra(o.id);
+    });
     li.innerHTML = `
       <div class="item-header">
         <div>
@@ -1891,6 +1904,91 @@ function renderObras() {
       const [tipo, obraId] = b.dataset.quickMov.split(":");
       openQuickMovDialog(tipo, obraId);
     }));
+}
+
+// ✅ NUEVA FUNCIÓN: Mostrar DETALLE COMPLETO DE UNA OBRA al clickar en la tarjeta (horas x trabajador, ingresos, gastos, movimientos, notas):
+function abrirDetalleObra(obraId) {
+  const o = getObraById(obraId);
+  if (!o) return;
+  const dlg = document.getElementById("detalleObraDialog");
+  if (!dlg) return;
+  // 1) Título y datos generales:
+  const est = ESTADOS_OBRA[o.estado] || ESTADOS_OBRA.pendiente;
+  document.getElementById("detalleObraTitulo").innerHTML = `🏢 ${escapeHtml(o.nombre)} <span class="tag ${est.clase}">${est.label}</span> ${o.cliente ? `<span class="tag categoria">👤 ${escapeHtml(o.cliente)}</span>` : ""}`;
+  const ingresos = calcularIngresosObra(o.id); const gastos = calcularGastosObra(o.id); const costeHoras = calcularCosteObra(o.id);
+  const beneficio = ingresos - gastos;
+  const ppto = Number(o.presupuesto) || 0;
+  const horasTotal = state.horas.filter((h) => h.obraId === o.id).reduce((s, h) => s + (Number(h.cantidad) || 0), 0);
+  // 2) Sub datos (tarjetas):
+  const subDatosHTML = [
+    { title: "📅 Presupuesto", value: formatMoney(ppto), cls: "" },
+    { title: `⏰ Horas Totales (${horasTotal.toFixed(1)}h)`, value: formatMoney(costeHoras), cls: "" },
+    { title: "📥 Ingresos Obra", value: `<span style="color:var(--income);">${formatMoney(ingresos)}</span>`, cls: "" },
+    { title: "📤 Gastos Obra", value: `<span style="color:var(--expense);">${formatMoney(gastos)}</span>`, cls: "" },
+    { title: "💵 Beneficio Neto", value: `<strong class="${beneficio >= 0 ? "porcentaje-positivo" : "porcentaje-negativo"}">${formatMoneySigned(beneficio)}</strong>`, cls: "" },
+    ingresos > 0 ? { title: "📊 % Rentabilidad", value: `${((beneficio / ingresos) * 100).toFixed(1)}%`, cls: "" } : null,
+  ].filter(Boolean).map(c => `<div class="obra-resumen-item">${c.title}<strong>${c.value}</strong></div>`).join("");
+  const cont = document.getElementById("detalleObraSubDatos"); if (cont) cont.innerHTML = subDatosHTML;
+
+  // 3) Tabla horas POR TRABAJADOR:
+  const tbody = document.querySelector("#detalleObraHorasTabla tbody");
+  if (tbody) {
+    // Agrupar horas x trabajador:
+    const agrupado = {};
+    state.horas.filter(h => h.obraId === o.id).forEach(h => {
+      if (!agrupado[h.trabajadorId]) agrupado[h.trabajadorId] = { trabajadorId: h.trabajadorId, horas: 0, coste: 0 };
+      agrupado[h.trabajadorId].horas += Number(h.cantidad) || 0;
+      agrupado[h.trabajadorId].coste += Number(h.costeTotal) || 0;
+    });
+    const filas = Object.values(agrupado).map(x => {
+      const t = getTrabajadorById(x.trabajadorId);
+      return `<tr>
+        <td>${t ? `👷 ${escapeHtml(t.nombre)}` : `⚠️ ID ${escapeHtml(x.trabajadorId)}`}</td>
+        <td>${x.horas.toFixed(2)}h</td>
+        <td style="color:var(--expense);">${formatMoney(x.coste)}</td>
+      </tr>`;
+    });
+    // Total fila:
+    if (filas.length > 0) {
+      filas.push(`<tr style="background:#f1f5f9;font-weight:bold;">
+        <td>📊 TOTALES OBRA</td>
+        <td>${horasTotal.toFixed(2)}h</td>
+        <td style="color:var(--expense);">${formatMoney(costeHoras)}</td>
+      </tr>`);
+    }
+    tbody.innerHTML = filas.length === 0 ? `<tr><td colspan="3" class="empty">Sin horas registradas en esta obra aún.</td></tr>` : filas.join("");
+  }
+  // 4) Lista movimientos de la obra:
+  const ulMov = document.getElementById("detalleObraMovimientos");
+  if (ulMov) {
+    const movs = [...state.movimientos].filter(m => m.obraId === o.id)
+      .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "") || (b.createdAt || "").localeCompare(a.createdAt || ""));
+    if (movs.length === 0) ulMov.innerHTML = `<li class="empty">Sin movimientos económicos en esta obra aún. Pulsa + Ingreso o + Gasto en la tarjeta.</li>`;
+    else ulMov.innerHTML = movs.map(m => {
+      const isIng = String(m.tipo || "").toLowerCase() === "ingreso";
+      const resp = m.responsableId ? getTrabajadorById(m.responsableId) : null;
+      const real = m.realizadoPorId ? getTrabajadorById(m.realizadoPorId) : null;
+      const sign = isIng ? "+" : "-"; const color = isIng ? "text-green" : "text-red";
+      return `<li class="list-item">
+        <div>
+          <strong class="${color}">${isIng ? "📥" : "📤"} ${sign}${formatMoney(Number(m.importe) || 0)}</strong>
+          <div class="text-muted small">${formatDate(m.fecha)} · ${(CATEGORIAS_MOV[m.categoria] || m.categoria || "")}${resp ? ` · 💵 ${escapeHtml(resp.nombre)}` : ""}${real ? ` · 👑 ${isIng ? "Cobrado por" : "Pagado por"}: ${escapeHtml(real.nombre)}` : ""}</div>
+          <div>${escapeHtml(m.concepto || "")}</div>
+        </div>
+      </li>`;
+    }).join("");
+  }
+  // 5) Notas y dirección:
+  const notaBox = document.getElementById("detalleObraNotas");
+  if (notaBox) {
+    const trozos = [];
+    if (o.direccion) trozos.push(`📍 <strong>Dirección:</strong> ${escapeHtml(o.direccion)}`);
+    if (o.fechaInicio || o.fechaFin) trozos.push(`📅 <strong>Plazo:</strong> ${formatDate(o.fechaInicio)} → ${formatDate(o.fechaFin)}`);
+    if (o.notas) trozos.push(`📝 <strong>Notas:</strong> ${escapeHtml(o.notas)}`);
+    notaBox.innerHTML = trozos.length ? `<div style="padding:.8rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:.5rem;font-size:.95rem;">${trozos.join("<br/>")}</div>` : "";
+  }
+  // 6) Abrir modal:
+  if (typeof dlg.showModal === "function") try { dlg.showModal(); } catch(e) { alert("Tu navegador no soporta modales nativos. Actualiza Chrome/Safari."); }
 }
 
 /* ============ SELECTS COMUNES ============ */
@@ -2824,6 +2922,44 @@ function bindQuickMovEvents() {
 }
 
 function bindAjustesEvents() {
+  // ========== SUBTABS INTERNAS DE LA PESTAÑA AJUSTES ==========
+  const tabAjustes = document.getElementById("tab-ajustes");
+  if (tabAjustes) {
+    tabAjustes.querySelectorAll("[data-subtab]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const which = btn.dataset.subtab;
+        tabAjustes.querySelectorAll("[data-subtab]").forEach(b => b.classList.toggle("active", b === btn));
+        ["general","datos","herramientas"].forEach(k => {
+          const el = document.getElementById("subtab-" + k);
+          if (!el) return;
+          if (k === which) { el.classList.remove("hidden"); el.style.display = "block"; }
+          else { el.classList.add("hidden"); el.style.display = "none"; }
+        });
+      });
+    });
+  }
+
+  // ========== ⚒️ HERRAMIENTAS ADMIN (botones antiguos navbar) ==========
+  if (els.btnForceSync2) els.btnForceSync2.addEventListener("click", async () => { await forceSyncUI(); });
+  if (els.btnForceRenderAll2) els.btnForceRenderAll2.addEventListener("click", async () => {
+    try { await safeRenderAll(false); alert("✅ Repintado completado. Mira el banner rojo de arriba si alguna función falló."); }
+    catch(e) { alert("❌ Error al repintar: " + e.message); }
+  });
+  if (els.btnDebugMovil2) els.btnDebugMovil2.addEventListener("click", async () => {
+    try { typeof showDebugModal === "function" ? await showDebugModal() : alert("Función de debug no disponible. Recarga la página."); }
+    catch(e) { alert("Debug: " + e.message); }
+  });
+  if (els.btnDiagnosticoCompleto2) els.btnDiagnosticoCompleto2.addEventListener("click", async () => {
+    try { typeof showDiagnosticoModal === "function" ? await showDiagnosticoModal() : alert("Función diagnóstico no disponible. Recarga la página."); }
+    catch(e) { alert("Diagnóstico: " + e.message); }
+  });
+  if (els.btnHardResetCache2) els.btnHardResetCache2.addEventListener("click", async () => {
+    if (!(await confirmAction("Hard Reset Caché + Recargar?", "Esto borrará toda la caché local del navegador (sesión, login, datos en memoria) y recargará la app. Tendrás que volver a introducir tu PIN."))) return;
+    try { localStorage.clear(); sessionStorage.clear(); if (window.caches) { try { await caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k)))); } catch {} } } catch {}
+    setTimeout(() => { window.location.replace(window.location.href.split("#")[0].split("?")[0] + "?_r=" + Date.now()); }, 200);
+  });
+
+  // ========== CAMBIAR PIN ADMIN ==========
   els.btnCambiarPinAdmin.addEventListener("click", async () => {
     const actual = els.ajustePinAdmin.value;
     const nuevo = els.ajustePinNuevo.value.trim();
@@ -2864,7 +3000,7 @@ function bindAjustesEvents() {
       setStatus(els.ajustesStatus, "⏳ Recuperando último backup automático...", false);
       const res = await api("/api/backup/restaurar-ultimo-automatico", { method: "POST", body: "{}" });
       state.cajasData = null; await loadAllData(false, true);
-      renderLoginSelect(); try { await renderAll(); } catch {}
+      renderLoginSelect(); try { await safeRenderAll(true); } catch {}
       const r = res?.resumen || {};
       setStatus(els.ajustesStatus, `✅ Último backup restaurado correctamente: ${r.trabajadores||0} trabajadores, ${r.obras||0} obras, ${r.horas||0} horas, ${r.movimientos||0} movimientos.`, false, true);
       const wb = document.getElementById("warningBackupBanner");
@@ -2883,7 +3019,7 @@ function bindAjustesEvents() {
       if (!b || !Array.isArray(b.trabajadores)) throw new Error("Archivo no válido.");
       await api("/api/backup/restaurar", { method: "POST", body: JSON.stringify(b) });
       state.cajasData = null; await loadAllData(false, true);
-      renderLoginSelect(); try { await renderAll(); } catch {}
+      renderLoginSelect(); try { await safeRenderAll(true); } catch {}
       setStatus(els.ajustesStatus, "✅ Backup importado correctamente (datos en servidor).", false, true);
     } catch (err) {
       setStatus(els.ajustesStatus, "❌ Error al importar: " + err.message, true);
@@ -2891,17 +3027,54 @@ function bindAjustesEvents() {
     ev.target.value = "";
   });
 
+  // ========== 🔐 BORRAR TODO PROTEGIDO CON CONTRASEÑA MAESTRA = "1285" ==========
+  const PIN_MAESTRO_BORRADO = "1285";
+  const ocultarPanelAuthBorrar = () => {
+    if (els.borrarTodoAuth) { els.borrarTodoAuth.classList.add("hidden"); els.borrarTodoAuth.style.display = "none"; }
+    if (els.pinBorrarTodo) els.pinBorrarTodo.value = "";
+    if (els.borrarTodoStatus) setStatus(els.borrarTodoStatus, "", false);
+  };
+  // 1) Pulsar btnBorrarTodo → MUESTRA PANEL DE AUTENTICACIÓN (antes no hacía nada sin contraseña)
   els.btnBorrarTodo.addEventListener("click", async () => {
     if (!(await confirmAction("⚠️ BORRAR TODO", "Esto eliminará trabajadores, obras, horas y movimientos del servidor. ¡Irreversible!"))) return;
-    if (!(await confirmAction("Confirmación final", "¿Seguro que quieres borrar TODOS los datos del servidor?"))) return;
+    // Mostramos el panel de contraseña 1285:
+    if (els.borrarTodoAuth) {
+      els.borrarTodoAuth.classList.remove("hidden");
+      els.borrarTodoAuth.style.display = "block";
+      if (els.pinBorrarTodo) { els.pinBorrarTodo.value = ""; setTimeout(() => els.pinBorrarTodo.focus?.(), 50); }
+      if (els.borrarTodoStatus) setStatus(els.borrarTodoStatus, "Introduce la CONTRASEÑA MAESTRA para continuar...", false);
+    }
+  });
+  if (els.btnBorrarTodoCancelar) els.btnBorrarTodoCancelar.addEventListener("click", ocultarPanelAuthBorrar);
+  // 2) Pulsar CONFIRMAR BORRADO FINAL: valida PIN 1285 y envía al backend
+  if (els.btnBorrarTodoConfirmFinal) els.btnBorrarTodoConfirmFinal.addEventListener("click", async () => {
+    const pin = String(els.pinBorrarTodo?.value || "").trim();
+    if (pin !== PIN_MAESTRO_BORRADO) {
+      setStatus(els.borrarTodoStatus, "❌ CONTRASEÑA INCORRECTA. Si no la recuerdas contacta con soporte (PIN = 1285).", true);
+      return;
+    }
+    // 2ª confirmación extra (aunque pin sea correcto):
+    if (!(await confirmAction("Confirmación FINAL", "Introdujiste la contraseña correcta. ¿SEGURO QUE QUIERES BORRAR ABSOLUTAMENTE TODOS LOS DATOS?"))) return;
     try {
-      await api("/api/backup/restaurar", { method: "POST", body: JSON.stringify({ trabajadores: [], obras: [], horas: [], movimientos: [], settings: [{ clave: "admin_pin", valor: DEFAULT_ADMIN_PIN }] }) });
+      setStatus(els.borrarTodoStatus, "⏳ Borrando TODOS los datos de la BBDD (incluida Nube Turso)...", false);
+      // Enviamos el PIN MAESTRO al BACKEND para que COMPRUEBE de nuevo (NUNCA te fíes del frontend!):
+      await api("/api/backup/restaurar", {
+        method: "POST",
+        body: JSON.stringify({
+          trabajadores: [], obras: [], horas: [], movimientos: [],
+          settings: [{ clave: "admin_pin", valor: DEFAULT_ADMIN_PIN }],
+          masterPin: PIN_MAESTRO_BORRADO,
+          esBorradoTotal: true,
+        })
+      });
       state.adminPin = DEFAULT_ADMIN_PIN;
-      await loadAllData();
-      renderLoginSelect(); try { await renderAll(); } catch {}
+      await loadAllData(false, true);
+      renderLoginSelect(); try { await safeRenderAll(true); } catch {}
       setStatus(els.ajustesStatus, "✅ Datos del servidor borrados. PIN restaurado a 1234.", false, true);
+      ocultarPanelAuthBorrar();
+      alert("✅ Borrado completo de BBDD realizado correctamente.");
     } catch (err) {
-      setStatus(els.ajustesStatus, "❌ " + err.message, true);
+      setStatus(els.borrarTodoStatus, "❌ Error al borrar: " + err.message, true);
     }
   });
 }
@@ -2932,6 +3105,8 @@ function cacheEls() {
     "btnExportarSueldos",
     "ajustePinAdmin","ajustePinNuevo","ajustePinConfirmar","btnCambiarPinAdmin","ajustesStatus",
     "btnExportarTodo","btnBorrarTodo",
+    "pinBorrarTodo","borrarTodoAuth","borrarTodoStatus","btnBorrarTodoConfirmFinal","btnBorrarTodoCancelar",
+    "btnForceSync2","btnForceRenderAll2","btnDebugMovil2","btnDiagnosticoCompleto2","btnHardResetCache2",
     "quickObra","btnQuickNewObra","quickNewObraDialog","quickNewObraForm",
     "qnoNombre","qnoCliente","qnoDireccion","qnoStatus","qnoSubmit",
     "quickMovDialog","quickMovForm","qmTitle","qmHint","qmObraId","qmTipo","qmFecha","qmImporte","qmResponsable","qmCategoria","qmFormaPago","qmConcepto","qmReferencia","qmStatus","qmSubmit",

@@ -71,9 +71,6 @@
           <span id="syncStatus" class="hint" style="margin:0;font-size:.82rem;"></span>
           <span id="userBadge" class="user-badge"></span>
           <button class="btn small ghost" id="btnForceSync" title="Traer al instante todas las novedades de obra+horas de la nube (si no ves lo último)">🔄 Sincronizar</button>
-          <button class="btn small ghost" id="btnForceRenderAll" style="background:#fef2f2;color:#991b1b;border-color:#fca5a5;font-weight:bold;" title="FALLOS AL PINTAR? Pulsa AQUÍ para repintar TODAS las pestañas y funciones al instante. Si alguna falla, saldrá un banner rojo gigante diciendo por qué.">💥 Forzar Repintar Todo</button>
-          <button class="btn small ghost" id="btnDebugMovil" style="display:none;background:#fef3c7;color:#78350f;border-color:#fbbf24;" title="Información depuración + limpiar caché móvil si no actualiza">📱 Debug Móvil</button>
-          <button class="btn small ghost" id="btnDiagnosticoCompleto" style="background:#eff6ff;color:#1e40af;border-color:#93c5fd;" title="Generar INFORME COMPLETO DE DIAGNÓSTICO (para solucionar fallo datos 0)">🧐 Diagnóstico Completo</button>
           <button class="btn small ghost" id="btnLogout">🚪 Salir</button>
         </div>
         <script>
@@ -701,45 +698,82 @@
     </section>
 
     <section id="tab-ajustes" class="tab-content" data-role="admin">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>⚙️ Ajustes Generales</h2>
-        </div>
-        <div class="form-grid">
-          <div>
-            <label for="ajustePinAdmin">PIN de Administrador (actual)</label>
-            <input id="ajustePinAdmin" type="text" inputmode="numeric" />
-          </div>
-          <div>
-            <label for="ajustePinNuevo">Nuevo PIN Admin</label>
-            <input id="ajustePinNuevo" type="text" inputmode="numeric" maxlength="10" placeholder="Nuevo PIN..." />
-          </div>
-          <div>
-            <label for="ajustePinConfirmar">Confirmar Nuevo PIN</label>
-            <input id="ajustePinConfirmar" type="text" inputmode="numeric" maxlength="10" placeholder="Repite el nuevo PIN..." />
-          </div>
-          <div style="display:flex;align-items:flex-end;">
-            <button class="btn primary" id="btnCambiarPinAdmin" style="width:100%;">🔐 Cambiar PIN Admin</button>
-          </div>
-        </div>
-        <p id="ajustesStatus" class="status" style="margin-top:.8rem;"></p>
+      <div class="nav-tabs" style="margin-bottom:.8rem;padding:0;">
+        <button class="tab-btn active" data-subtab="general">⚙️ General</button>
+        <button class="tab-btn" data-subtab="datos">📂 Gestión Datos</button>
+        <button class="tab-btn" data-subtab="herramientas">⚒️ Herramientas Admin</button>
       </div>
 
-      <div class="panel">
-        <div class="panel-head">
-          <h2>📂 Gestión de Datos</h2>
+      <div class="subtab-content" id="subtab-general" style="display:block;">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>⚙️ Ajustes Generales</h2>
+          </div>
+          <div class="form-grid">
+            <div>
+              <label for="ajustePinAdmin">PIN de Administrador (actual)</label>
+              <input id="ajustePinAdmin" type="text" inputmode="numeric" />
+            </div>
+            <div>
+              <label for="ajustePinNuevo">Nuevo PIN Admin</label>
+              <input id="ajustePinNuevo" type="text" inputmode="numeric" maxlength="10" placeholder="Nuevo PIN..." />
+            </div>
+            <div>
+              <label for="ajustePinConfirmar">Confirmar Nuevo PIN</label>
+              <input id="ajustePinConfirmar" type="text" inputmode="numeric" maxlength="10" placeholder="Repite el nuevo PIN..." />
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+              <button class="btn primary" id="btnCambiarPinAdmin" style="width:100%;">🔐 Cambiar PIN Admin</button>
+            </div>
+          </div>
+          <p id="ajustesStatus" class="status" style="margin-top:.8rem;"></p>
         </div>
-        <div class="actions">
-          <button class="btn" id="btnRestaurarBackupAuto" style="background:#d97706;color:white;border-color:#b45309;font-weight:bold;" title="Recupera el último backup automático que el servidor guardó antes de borrar/reiniciar">🔙 <strong>Recuperar Último Backup Automático</strong></button>
-          <button class="btn primary" id="btnExportarTodo">💾 Exportar Copia de Seguridad (JSON)</button>
-          <label class="btn" for="importarTodoFile" style="cursor:pointer;">📂 Importar Copia (JSON)</label>
-          <input type="file" id="importarTodoFile" accept=".json" hidden />
-          <button class="btn danger" id="btnBorrarTodo">⚠️ <strong>BORRAR TODO (Incluido Nube Turso / Render)</strong></button>
+      </div>
+
+      <div class="subtab-content hidden" id="subtab-datos">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>📂 Gestión de Datos</h2>
+          </div>
+          <div class="actions">
+            <button class="btn" id="btnRestaurarBackupAuto" style="background:#d97706;color:white;border-color:#b45309;font-weight:bold;" title="Recupera el último backup automático que el servidor guardó antes de borrar/reiniciar">🔙 <strong>Recuperar Último Backup Automático</strong></button>
+            <button class="btn primary" id="btnExportarTodo">💾 Exportar Copia de Seguridad (JSON)</button>
+            <label class="btn" for="importarTodoFile" style="cursor:pointer;">📂 Importar Copia (JSON)</label>
+            <input type="file" id="importarTodoFile" accept=".json" hidden />
+            <button class="btn danger" id="btnBorrarTodo" style="background:#991b1b;border-color:#7f1d1d;">⚠️ <strong>BORRAR TODO (Incluido Nube Turso / Render)</strong></button>
+          </div>
+          <!-- MODAL INTERNO: Pide contraseña 1285 antes de borrar -->
+          <div id="borrarTodoAuth" class="hidden" style="margin-top:1rem;padding:1rem;background:#fff1f2;border:2px solid #fb7185;border-radius:.6rem;">
+            <p style="margin:0 0 .5rem 0;font-weight:700;color:#9f1239;">🔐 Para BORRAR TODOS LOS DATOS introduce la CONTRASEÑA MAESTRA:</p>
+            <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+              <input id="pinBorrarTodo" type="password" inputmode="numeric" maxlength="10" placeholder="Introduce contraseña..." />
+              <button class="btn danger" id="btnBorrarTodoConfirmFinal">🗑️ <strong>CONFIRMAR: Sí, BORRAR TODO</strong></button>
+              <button type="button" class="btn" id="btnBorrarTodoCancelar">Cancelar</button>
+            </div>
+            <p id="borrarTodoStatus" class="status" style="margin-top:.6rem;"></p>
+          </div>
+          <p class="hint" style="margin-top:.5rem;">Exporta una copia de seguridad periódicamente para no perder información. El servidor guarda <strong>automáticamente</strong> un backup cada vez que se inicia/reinicia o restauras datos. Si algo sale mal, usa el botón naranja 🔙 para recuperarlo en 1 click.</p>
+          <div style="margin-top:1rem;padding:1rem;background:#fff7ed;border:1px solid #fdba74;border-radius:.5rem;font-size:.95rem;">
+            <strong style="color:#9a3412;">🚨 Por qué mis datos volvían aunque borraba la base de datos?</strong>
+            <p style="margin:.4rem 0 0;">Si tu app está en Render.com con BBDD Turso: la BBDD REAL está <strong>EN LA NUBE (3 réplicas en Europa)</strong>. Borrar el archivo <code>.db</code> local o reiniciar Render NO borra NADA (es una protección para NO perder datos reales de nóminas/obras). Usa el botón <strong>⚠️ BORRAR TODO (Incluido Nube Turso)</strong> de arriba para borrar de VERDAD y desaparecerán las obras "fantasma".</p>
+          </div>
         </div>
-        <p class="hint">Exporta una copia de seguridad periódicamente para no perder información. El servidor guarda <strong>automáticamente</strong> un backup cada vez que se inicia/reinicia o restauras datos. Si algo sale mal, usa el botón naranja 🔙 para recuperarlo en 1 click.</p>
-        <div style="margin-top:1rem;padding:1rem;background:#fff7ed;border:1px solid #fdba74;border-radius:.5rem;font-size:.95rem;">
-          <strong style="color:#9a3412;">🚨 Por qué mis datos volvían aunque borraba la base de datos?</strong>
-          <p style="margin:.4rem 0 0;">Si tu app está en Render.com con BBDD Turso: la BBDD REAL está <strong>EN LA NUBE (3 réplicas en Europa)</strong>. Borrar el archivo <code>.db</code> local o reiniciar Render NO borra NADA (es una protección para NO perder datos reales de nóminas/obras). Usa el botón <strong>⚠️ BORRAR TODO (Incluido Nube Turso)</strong> de arriba para borrar de VERDAD y desaparecerán las obras "fantasma".</p>
+      </div>
+
+      <div class="subtab-content hidden" id="subtab-herramientas">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>⚒️ Herramientas de Depuración / Admin</h2>
+            <p class="hint">Botones avanzados (antes en la barra superior). Úsalos solo si tienes problemas de sincronización o visualización.</p>
+          </div>
+          <div class="actions" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:.6rem;">
+            <button class="btn" id="btnForceSync2" style="background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe;font-weight:600;">🔄 <strong>Forzar Sincronización</strong> (traer datos nuevos)</button>
+            <button class="btn" id="btnForceRenderAll2" style="background:#fef2f2;color:#991b1b;border-color:#fecaca;font-weight:bold;">💥 <strong>Forzar Repintar Todas las Pestañas</strong> (fallo visual?)</button>
+            <button class="btn" id="btnDebugMovil2" style="background:#fef3c7;color:#78350f;border-color:#fbbf24;font-weight:600;">📱 <strong>Debug Móvil</strong> (ver datos sesión)</button>
+            <button class="btn" id="btnDiagnosticoCompleto2" style="background:#eff6ff;color:#1e40af;border-color:#93c5fd;font-weight:600;">🧐 <strong>Diagnóstico Completo</strong> (fallo datos 0?)</button>
+            <button class="btn" id="btnHardResetCache2" style="background:#fee2e2;color:#b91c1c;border-color:#fca5a5;font-weight:600;">🧹 <strong>Hard Reset Caché + Recargar App</strong> (móvil no actualiza?)</button>
+          </div>
+          <p class="hint" style="margin-top:.8rem;">💡 Consejo: Si algo se ve raro o no se actualiza en el móvil: usa primero 🔄 Forzar Sincronización, luego 💥 Forzar Repintar. Si sigue sin ir: 🧹 Hard Reset Caché + Recargar (vuelve a entrar con PIN).</p>
         </div>
       </div>
     </section>
