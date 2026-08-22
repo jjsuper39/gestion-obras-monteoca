@@ -715,6 +715,10 @@ async function safeRenderAll(evitarBanner = false) {
   } else if (isWorker()) {
     await sr("renderWorker()", () => { if (typeof renderWorker === "function") return renderWorker(); });
     await sr("renderHoras()", () => { if (typeof renderHoras === "function") return renderHoras(); });
+    await sr("renderMisEntregasCuenta()", () => { if (typeof renderMisEntregasCuenta === "function") return renderMisEntregasCuenta(); });
+  }
+  if (isAdmin()) {
+    try { await sr("renderMisEntregasCuenta()", () => { if (typeof renderMisEntregasCuenta === "function") return renderMisEntregasCuenta(); }); } catch {}
   }
   try { await sr("actualizarUserBadge()", () => { if (typeof actualizarUserBadge === "function") return actualizarUserBadge(); }); } catch {}
   try { await sr("populateResponsablesSelect()", () => { if (typeof populateResponsablesSelect === "function") return populateResponsablesSelect(); }); } catch {}
@@ -2976,6 +2980,20 @@ function bindAjustesEvents() {
     try { localStorage.clear(); sessionStorage.clear(); if (window.caches) { try { await caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k)))); } catch {} } } catch {}
     setTimeout(() => { window.location.replace(window.location.href.split("#")[0].split("?")[0] + "?_r=" + Date.now()); }, 200);
   });
+  if (document.getElementById("btnRepararCajas2")) document.getElementById("btnRepararCajas2").addEventListener("click", async () => {
+    if (!(await confirmAction("🔧 ¿Reparar Cajas de Socios?", "Esto arregla TODOS los movimientos antiguos que tienen 'Entregado Por / Caja' vacío (NULL). Los 6000€ de ingreso, 40€ y 50€ de entrega a Kevin se asignarán a Juanje (socio principal). Así Juanje tendrá: Cobró = 6000€, Pagó = 90€, Saldo Caja = 5910€. ¿Continuar?"))) return;
+    try {
+      const r = await api("/api/cajas/reparar", { method: "POST", body: JSON.stringify({}) });
+      if (r?.ok) {
+        await alert(`✅ ¡${Number(r.corregidos)||0} movimientos arreglados!\n\nSocio principal = ${r.socioPrincipal || "Juanje"}\n\nAhora pulsa Aceptar y luego:\n1) Ve a 💵 Cajas/Saldos Socios\n2) Pulsa 🔄 Actualizar (o Mes Actual)\n\nVerás a Juanje: Cobró = 6000€, Pagó = 90€, Saldo = 5910€ ✅`);
+        try {
+          state.cajasData = null; _cajasLoadLock = null;
+          await loadAllData(true, true);
+          await safeRenderAll(true);
+        } catch {}
+      } else alert("❌ Error: " + (r?.error || "sin mensaje"));
+    } catch (e) { alert("❌ Error reparando cajas: " + e.message); }
+  });
 
   // ========== CAMBIAR PIN ADMIN ==========
   els.btnCambiarPinAdmin.addEventListener("click", async () => {
@@ -3567,6 +3585,72 @@ function bindCajasEvents() {
   });
   els.btnCajasRefresh.addEventListener("click", () => refreshCajasFull());
 }
+function bindMisEntregasEvents() {
+  const btnRef = document.getElementById("btnRefreshEntregas");
+  const desde = document.getElementById("filtroEntrDesde");
+  const hasta = document.getElementById("filtroEntrHasta");
+  if (btnRef) btnRef.addEventListener("click", async () => {
+    _misEntregasCache = null;
+    await renderMisEntregasCuenta();
+  });
+  const aplicar = async () => { _misEntregasCache = null; await renderMisEntregasCuenta(); };
+  if (desde) desde.addEventListener("change", aplicar);
+  if (hasta) hasta.addEventListener("change", aplicar);
+}
+
+/* ============ MIS ENTREGAS A CUENTA (vista trabajador, pero admin también lo ve en su pestaña) ============ */
+let _misEntregasCache = null;
+async function loadMisEntregasData(force = false) {
+  if (!state.session?.token) return null;
+  if (!force && _misEntregasCache) return _misEntregasCache;
+  try {
+    _misEntregasCache = await api("/api/me/mis-entregas-cuenta");
+    return _misEntregasCache;
+  } catch (e) {
+    console.warn("loadMisEntregasData error:", e);
+    return null;
+  }
+}
+async function renderMisEntregasCuenta() {
+  const elCards = document.getElementById("misEntregasGlobalCards");
+  const tbl = document.getElementById("misEntregasTable");
+  const tbody = tbl?.querySelector("tbody");
+  if (!elCards || !tbody) return;
+  try {
+    const data = await loadMisEntregasData(true);
+    const desde = document.getElementById("filtroEntrDesde")?.value || "";
+    const hasta = document.getElementById("filtroEntrHasta")?.value || "";
+    let filas = data?.entregas || [];
+    if (desde) filas = filas.filter((m) => (m.fecha || "") >= desde);
+    if (hasta) filas = filas.filter((m) => (m.fecha || "") <= hasta);
+    const totEnt = filas.filter(f => String(f.tipo || "").toLowerCase() === "gasto").reduce((s,m) => s + (Number(m.importe)||0), 0);
+    const totReemb = filas.filter(f => String(f.tipo || "").toLowerCase() === "ingreso").reduce((s,m) => s + (Number(m.importe)||0), 0);
+    const neto = totReemb - totEnt;
+    elCards.innerHTML = [
+      { title: "🧾 Nº Entregas / Apuntes", value: `${filas.length}`, cls: "stat-blue" },
+      { title: "💸 Total Adelantos (me han entregado)", value: formatMoney(totEnt), cls: "stat-red" },
+      { title: "🔙 Reembolsos / Ingresos a favor", value: formatMoney(totReemb), cls: "stat-green" },
+      { title: "🧾 Neto: (Reembolsos - Adelantos)", value: formatMoney(neto), cls: (neto >= 0 ? "stat-purple" : "stat-orange") },
+    ].map(c => `<div class="stat-card ${c.cls}"><h3>${c.title}</h3><p class="stat-value">${c.value}</p></div>`).join("");
+    if (filas.length > 0) {
+      tbody.innerHTML = filas.map(m => {
+        const isEnt = String(m.tipo || "").toLowerCase() === "gasto";
+        const txtTipo = isEnt ? `<td class="text-red"><strong>💸 ${formatMoney(Number(m.importe)||0)}</strong></td>` : `<td class="text-green"><strong>🔙 ${formatMoney(Number(m.importe)||0)}</strong></td>`;
+        return `<tr>
+          <td>${escapeHtml(m.fecha || "")}</td>
+          ${txtTipo}
+          <td>${escapeHtml(m.concepto || "")}${m.notas ? `<br><span class="text-muted" style="font-size:.85em;">${escapeHtml(m.notas || "")}</span>` : ""}</td>
+          <td>${escapeHtml(m.entregadoPorNombre || "(Caja general)")}</td>
+        </tr>`;
+      }).join("");
+    } else {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty">Todavía no tienes entregas a cuenta guardadas. Cuando el administrador te entregue un adelanto de nómina aparecerán aquí ordenados por fecha, con importe, concepto y quién te lo entregó.</td></tr>`;
+    }
+  } catch (e) {
+    console.warn(e);
+    if (elCards) elCards.innerHTML = `<div class="stat-card stat-orange" style="grid-column:1/-1"><h3>💸 Mis Entregas</h3><p class="stat-value" style="font-size:1.2em">⚠️ Error cargando entregas. Pulsa 🔄 Actualizar.</p></div>`;
+  }
+}
 
 async function init() {
   cacheEls();
@@ -3578,6 +3662,7 @@ async function init() {
   bindQuickNewObraEvents();
   bindQuickMovEvents();
   bindCajasEvents();
+  bindMisEntregasEvents();
   setDefaults();
 
   const ok = await loadAllData();

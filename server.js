@@ -666,8 +666,23 @@ app.post("/api/movimientos", authMiddleware, requireAdmin, async (req, res) => {
   if (!["ingreso", "gasto"].includes(data.tipo))
     return res.status(400).json({ error: "Tipo debe ser ingreso/gasto" });
   const id = data.id || randomId();
-  // ✅ Si el admin NO especifica realizadoPorId -> se pone el ID del propio admin que está haciendo la petición (es decir, sale de SU caja):
-  const realizadoPorId = data.realizadoPorId || (req.user.role === "admin" ? (req.user.userId || req.user.trabajadorId || null) : null);
+  // ✅ MÚLTIPLES CAPAS para REALIZADOPORID NUNCA NULL:
+  // Capa 1: viene en data (formulario):
+  let realizadoPorId = String(data.realizadoPorId || "").trim() || null;
+  // Capa 2: si responsableId = socio/admin, caja entra/sale de su propia caja (ej: ingreso 6000 a Juanje = caja Juanje):
+  if (!realizadoPorId && String(data.responsableId || "").trim()) {
+    const tr = await dbGet("SELECT id, rol FROM trabajadores WHERE id = ? LIMIT 1;", [data.responsableId]);
+    if (tr && tr.rol && /admin|socio/i.test(tr.rol || "")) realizadoPorId = tr.id;
+  }
+  // Capa 3: si no, usa el admin que hace la petición:
+  if (!realizadoPorId && req.user?.role === "admin") {
+    realizadoPorId = String(req.user.userId || req.user.trabajadorId || "").trim() || null;
+  }
+  // Capa 4: si SIGUE vacío, ponemos SOCIO PRINCIPAL:
+  if (!realizadoPorId) {
+    const fila = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY COALESCE(fechaAlta,id) ASC LIMIT 1;`);
+    if (fila?.id) realizadoPorId = fila.id;
+  }
   try {
     await insertMov({
       id, fecha: data.fecha, tipo: data.tipo, importe: Number(data.importe),
@@ -688,6 +703,19 @@ app.put("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res) =
   if (!m) return res.status(404).json({ error: "No existe" });
   const data = req.body || {};
   const merged = { ...normalizeMov(m), ...data, id };
+  // ✅ MÍNIMO 1 CAPA: si realizadoPorId = "", y responsableId es socio:
+  let realizadoPorId = String(merged.realizadoPorId || "").trim() || null;
+  if (!realizadoPorId && String(merged.responsableId || "").trim()) {
+    const tr = await dbGet("SELECT id, rol FROM trabajadores WHERE id = ? LIMIT 1;", [merged.responsableId]);
+    if (tr && /admin|socio/i.test(tr.rol || "")) realizadoPorId = tr.id;
+  }
+  // Si sigue vacío -> JWT admin o socio principal:
+  if (!realizadoPorId && req.user?.role === "admin") realizadoPorId = String(req.user.userId || req.user.trabajadorId || "").trim() || null;
+  if (!realizadoPorId) {
+    const fila = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY COALESCE(fechaAlta,id) ASC LIMIT 1;`);
+    if (fila?.id) realizadoPorId = fila.id;
+  }
+  merged.realizadoPorId = realizadoPorId;
   await dbRun(
     `UPDATE movimientos SET fecha = ?, tipo = ?, importe = ?, obraId = ?, responsableId = ?, realizadoPorId = ?, categoria = ?, formaPago = ?, concepto = ?, referencia = ? WHERE id = ?`,
     [merged.fecha, merged.tipo, Number(merged.importe) || 0, merged.obraId || null, merged.responsableId || null, merged.realizadoPorId || null,
@@ -699,6 +727,42 @@ app.delete("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res
   await dbRun("DELETE FROM movimientos WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
+
+/* =============== MIS ENTREGAS A CUENTA (solo usuario logueado trabajador) =============== */
+// ✅ ENDPOINT NUEVO: trabajador (o admin) logueado ve SUS entregas a cuenta (responsableId = yo)
+//    NO requiere admin, así que funciona para el login de Kevin.
+app.get("/api/me/mis-entregas-cuenta", authMiddleware, handle(async (req, res) => {
+  // Sacamos id del trabajador que hizo login (JWT):
+  const myId = String(req.user.trabajadorId || req.user.userId || "").trim();
+  if (!myId) return res.status(400).json({ error: "Usuario sin ID" });
+  const movs = await dbAll(`SELECT m.id, m.fecha, m.tipo, m.importe, m.concepto, m.notas, m.obraId,
+    m.realizadoPorId, t.nombre AS nombreEntregadoPor
+    FROM movimientos m
+    LEFT JOIN trabajadores t ON t.id = m.realizadoPorId
+    WHERE m.responsableId = ?
+    ORDER BY m.fecha DESC, m.createdAt DESC;`, [myId]);
+  const data = (movs || []).map(m => ({
+    id: m.id, fecha: m.fecha, tipo: String(m.tipo || ""),
+    importe: Number(m.importe) || 0,
+    concepto: m.concepto || "",
+    notas: m.notas || "",
+    obraId: m.obraId || null,
+    entregadoPorNombre: m.nombreEntregadoPor || "(Caja general)",
+    entregadoPorId: m.realizadoPorId || null,
+  }));
+  const total = data.reduce((s, m) => s + m.importe, 0);
+  const entregas = data.filter(d => d.tipo.toLowerCase() === "gasto").reduce((s,m) => s + m.importe, 0);
+  const reembolsos = data.filter(d => d.tipo.toLowerCase() === "ingreso").reduce((s,m) => s + m.importe, 0);
+  res.json({
+    myId,
+    totalMovimientos: data.length,
+    totalImporte: total,
+    totalEntregasCuenta: entregas,   // 💸 Los adelantos que le han dado (tipo gasto, responsable = yo)
+    totalReembolsos: reembolsos,     // 🔙 Lo que le debe la empresa o reemb.
+    netoPendienteConTrabajador: reembolsos - entregas,
+    entregas: data,
+  });
+}));
 
 /* =============== CAJAS / SALDOS POR TRABAJADOR =============== */
 app.get("/api/cajas", authMiddleware, requireAdmin, handle(async (req, res) => {
@@ -770,6 +834,45 @@ app.get("/api/cajas", authMiddleware, requireAdmin, handle(async (req, res) => {
     resumen: { totalSocios, totalCobrado, totalPagado, netoTotalCajas },
     filtros: { desde, hasta },
   });
+}));
+
+// ✅ [REPARACIÓN MANUAL POR SI UN MOVIMIENTO TIENE realizadoPorId NULL]
+//    Botón frontend "Reparar Cajas" (en Herramientas Admin) ejecuta este endpoint.
+//    Regla: si realizadoPorId = NULL / "" (antiguos):
+//       → Si responsableId ES ADMIN o SOCIO → le asignamos el MISMO id (cobró Juanje, entra en caja de Juanje)
+//       → Si NO (trabajador Kevin, entrega nómina de 40/50€), le asignamos el SOCIO PRINCIPAL (Juanje)
+app.post("/api/cajas/reparar", authMiddleware, requireAdmin, handle(async (req, res) => {
+  let corregidos = 0;
+  let socioId = null;
+  const filaAdmin = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY COALESCE(fechaAlta,id) ASC LIMIT 1;`);
+  if (filaAdmin && filaAdmin.id) socioId = filaAdmin.id;
+
+  if (socioId) {
+    // Regla 1: Si responsableId es ADMIN / SOCIO y realizadoPorId está vacío → le asigna responsableId (el cobro de Juanje = caja Juanje):
+    let upd1 = await dbRun(`UPDATE movimientos SET realizadoPorId = responsableId
+      WHERE (realizadoPorId IS NULL OR TRIM(realizadoPorId) = '')
+      AND responsableId IS NOT NULL AND TRIM(responsableId) != ''
+      AND EXISTS (
+        SELECT 1 FROM trabajadores t2
+        WHERE t2.id = responsableId AND LOWER(COALESCE(t2.rol,'')) IN ('admin','socio')
+      )`);
+    corregidos += Number(typeof upd1.changes ?? upd1.rowsAffected ?? 0) || 0;
+
+    // Regla 2: resto (Kevin = trabajador, entregas a cuenta): asignamos SOCIO PRINCIPAL a realizadoPorId:
+    let upd2 = await dbRun(`UPDATE movimientos SET realizadoPorId = ?
+      WHERE (realizadoPorId IS NULL OR TRIM(realizadoPorId) = '')
+      AND responsableId IS NOT NULL AND TRIM(responsableId) != ''`, [socioId]);
+    corregidos += Number(typeof upd2.changes ?? upd2.rowsAffected ?? 0) || 0;
+
+    // Regla 3: si todavía quedan movimientos CON responsableId PERO SIN socio (o vacío totalmente):
+    let upd3 = await dbRun(`UPDATE movimientos SET realizadoPorId = ?
+      WHERE (realizadoPorId IS NULL OR TRIM(realizadoPorId) = '')`, [socioId]);
+    corregidos += Number(typeof upd3.changes ?? upd3.rowsAffected ?? 0) || 0;
+
+    console.log(`✅ [REPARAR CAJAS] ${corregidos} movimientos corregidos, socio principal = ${socioId}`);
+  }
+
+  res.json({ ok: true, corregidos, socioPrincipal: socioId });
 }));
 
 /* =============== FALLBACK SPA =============== */

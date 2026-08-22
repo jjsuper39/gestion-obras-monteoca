@@ -94,6 +94,7 @@
       <button class="tab-btn" data-tab="trabajadores" data-role="admin">👷 Trabajadores</button>
       <button class="tab-btn" data-tab="obras" data-role="admin">🏢 Obras</button>
       <button class="tab-btn" data-tab="horas" data-role="both">⏱️ Mis Horas</button>
+      <button class="tab-btn" data-tab="entregas" data-role="both">💸 Mis Entregas a Cuenta</button>
       <button class="tab-btn" data-tab="contabilidad" data-role="admin">💰 Contabilidad</button>
       <button class="tab-btn" data-tab="cajas" data-role="admin">💵 Cajas / Saldos Socios</button>
       <button class="tab-btn" data-tab="cierre" data-role="admin">📅 Cierre de Mes</button>
@@ -447,6 +448,34 @@
       </div>
     </section>
 
+    <section id="tab-entregas" class="tab-content" data-role="both">
+      <div class="dashboard-grid" style="margin-bottom:1rem" id="misEntregasGlobalCards"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>💸 Mis Entregas a Cuenta (Adelantos que me han entregado)</h2>
+          <div class="actions compact">
+            <input type="date" id="filtroEntrDesde" title="Fecha desde" />
+            <input type="date" id="filtroEntrHasta" title="Fecha hasta" />
+            <button class="btn small primary" id="btnRefreshEntregas">🔄 Actualizar</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table" id="misEntregasTable">
+            <thead>
+              <tr>
+                <th>📅 Fecha</th>
+                <th>💰 Importe</th>
+                <th>📝 Concepto / Descripción</th>
+                <th>👑 Entregado por (De la caja de quién)</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section id="tab-contabilidad" class="tab-content" data-role="admin">
       <div class="panel">
         <div class="panel-head">
@@ -772,8 +801,9 @@
             <button class="btn" id="btnDebugMovil2" style="background:#fef3c7;color:#78350f;border-color:#fbbf24;font-weight:600;">📱 <strong>Debug Móvil</strong> (ver datos sesión)</button>
             <button class="btn" id="btnDiagnosticoCompleto2" style="background:#eff6ff;color:#1e40af;border-color:#93c5fd;font-weight:600;">🧐 <strong>Diagnóstico Completo</strong> (fallo datos 0?)</button>
             <button class="btn" id="btnHardResetCache2" style="background:#fee2e2;color:#b91c1c;border-color:#fca5a5;font-weight:600;">🧹 <strong>Hard Reset Caché + Recargar App</strong> (móvil no actualiza?)</button>
+            <button class="btn" id="btnRepararCajas2" style="background:#ecfdf5;color:#047857;border-color:#a7f3d0;font-weight:bold;">🔧 <strong>REPARAR CAJAS SOCIOS</strong> (Cobró/Pagó = 0?)</button>
           </div>
-          <p class="hint" style="margin-top:.8rem;">💡 Consejo: Si algo se ve raro o no se actualiza en el móvil: usa primero 🔄 Forzar Sincronización, luego 💥 Forzar Repintar. Si sigue sin ir: 🧹 Hard Reset Caché + Recargar (vuelve a entrar con PIN).</p>
+          <p class="hint" style="margin-top:.8rem;">💡 Consejo: Si ves saldos cajas en 0 (0€ cobrado, o entrega Kevin que no suma): pulsa 🔧 Reparar Cajas Socios → 6000€ + 40€ + 50€ arreglados automaticamente. Luego pulsa 🔄 Actualizar en la pestaña 💵 Cajas.</p>
         </div>
       </div>
     </section>
