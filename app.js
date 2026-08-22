@@ -307,6 +307,191 @@ function recalcularDesgloseTrabajadorFechasAfectadas(trabajadorId, fechasArray) 
   fechasUnicas.forEach((f) => recalcularDesgloseParaTrabajadorDia(trabajadorId, f));
 }
 
+/* ============ DIAGNÓSTICO COMPLETO (para pegar al chat y arreglar fallo datos 0) ============ */
+async function generarInformeDiagnosticoCompleto() {
+  forzarConsistenciaLogin();
+  const L = [];
+  const P = (s) => L.push(s);
+  P("══════════════════════════════════════════════════════════════════");
+  P("🧐 INFORME DIAGNÓSTICO COMPLETO - Gestión Obras");
+  P("══════════════════════════════════════════════════════════════════");
+  P("Generado: " + new Date().toLocaleString("es-ES"));
+  P("URL actual: " + window.location.href);
+  P("");
+  P("── 1) ENTORNO CLIENTE (tu navegador / móvil) ──");
+  P("Modo móvil detectado: " + (IS_MOBILE ? "✅ SÍ" : "❌ NO (PC)"));
+  P("UserAgent (navegador/SO): " + (navigator.userAgent || "(sin UA)").slice(0, 120));
+  P("Conexión: " + (navigator.onLine ? "✅ ONLINE" : "❌ SIN INTERNET") + (navigator.connection && navigator.connection.effectiveType ? ` (tipo: ${navigator.connection.effectiveType})` : ""));
+  P("Idioma navegador: " + (navigator.language || "—"));
+  P("Resolución pantalla: " + (window.screen ? window.screen.width + "x" + window.screen.height : "—") + " · Viewport: " + window.innerWidth + "x" + window.innerHeight);
+  P("");
+  P("── 2) ESTADO DE SESIÓN Y LOGIN ──");
+  P("Token JWT guardado: " + (getToken() ? `✅ SÍ (${String(getToken()).length} chars)` : "❌ NO (NO ESTÁS LOGGEADO → causa principal datos 0!)"));
+  P("Rol sesión (state): " + (state.session?.role === "admin" ? "👑 ADMIN" : state.session?.role === "worker" ? "👷 TRABAJADOR" : "❌ NINGÚN (sin login!)"));
+  P("ID trabajador sesión: " + (state.session?.trabajadorId || "—"));
+  P("Consistencia sesión (token + role): " + ((!!getToken() && !!state.session?.role) ? "✅ COINCIDE (OK)" : "❌ INCONSISTENTE (NO COINCIDEN token/sesion)"));
+  P("Admin PIN guardado en state: " + (state.adminPin ? "✅ SÍ (oculto)" : "❌ NO"));
+  P("");
+  P("── 3) DATOS ACTUALES EN TU APP (state en memoria) ──");
+  P("👷 Trabajadores: " + state.trabajadores.length);
+  P("🏢 Obras: " + state.obras.length);
+  P("⏰ Horas: " + state.horas.length);
+  P("💵 Movimientos: " + state.movimientos.length);
+  const totalState = state.trabajadores.length + state.obras.length + state.horas.length + state.movimientos.length;
+  P("📊 TOTAL DATOS EN TU APP: " + totalState + "  " + (totalState === 0 ? "⚠️ VACÍO (causa del fallo!)" : "✅ OK"));
+  P("Última sincro OK: " + (state.ultimaSync ? new Date(state.ultimaSync).toLocaleString("es-ES") : "NUNCA"));
+  P("");
+  // PRUEBA 1: BBDD REAL /api/health/diagnostico (sin auth)
+  P("═══ PRUEBA 1: /api/health/diagnostico (BBDD REAL, SIN LOGIN NADA) ═══");
+  let health = null, healthErr = null;
+  try {
+    const u = new URL(API_BASE + "/api/health/diagnostico", window.location.origin);
+    u.searchParams.set("_t", Date.now() + "_" + Math.random().toString(36).slice(2, 10));
+    const r = await fetch(u, { method: "GET", headers: { "Cache-Control": "no-store", "Pragma": "no-cache", "Accept": "application/json" }, cache: "no-store" });
+    health = await r.json();
+    if (!r.ok) throw new Error("HTTP " + r.status + " - " + JSON.stringify(health));
+  } catch (e) { healthErr = e.message; }
+  if (health && health.ok) {
+    P("✅ Llamada OK");
+    P("Motor de BBDD usado: " + health.motor);
+    P("¿Usa Turso Cloud (persistente): " + (health.motorUsaTurso ? "✅ SÍ (bueno, no se borran datos)" : "❌ NO (SQLite local)"));
+    P("¿Estás en Render: " + (health.isRender ? "✅ SÍ" : "NO"));
+    P(health.warning || "");
+    P("");
+    P("📊 CONTADORES REALES EN LA BBDD (Turso/SQL):");
+    const T = health.tables || {};
+    P("👷 Trabajadores (REAL): " + (T.trabajadores ?? 0));
+    P("🏢 Obras (REAL):        " + (T.obras ?? 0));
+    P("⏰ Horas (REAL):        " + (T.horas ?? 0));
+    P("💵 Movimientos (REAL):  " + (T.movimientos ?? 0));
+    P("⚙️ Settings (REAL):     " + (T.settings ?? 0));
+    const totalReal = (T.trabajadores || 0) + (T.obras || 0) + (T.horas || 0) + (T.movimientos || 0);
+    P("📊 TOTAL REAL EN BBDD:  " + totalReal + "  " + (totalReal === 0 ? "⚠️ VACÍO TOTAL EN TURSO/SQL (los datos nunca se guardaron!)" : "✅ HAY DATOS REALES EN BBDD"));
+    P("Admin PIN guardado en BBDD?: " + (health.adminPinExiste ? "✅ SÍ" : "❌ NO (está el PIN por defecto 1234)"));
+    P("");
+    P("🧪 MUESTRAS (últimas 3 filas de cada tabla en la BBDD REAL):");
+    if (health.muestras) {
+      const MT = health.muestras.ultimos3Trabajadores || [];
+      if (MT.length) { P("→ Trabajadores (muestra 3):"); MT.forEach((t, i) => P(`   ${i+1}) ID=${t.id} NOMBRE="${t.nombre}" ROL=${t.rol} ACTIVO=${t.activo}`)); }
+      else P("→ Trabajadores: NINGÚN DATO");
+      const MO = health.muestras.ultimas3Obras || [];
+      if (MO.length) { P("→ Obras (muestra 3):"); MO.forEach((o, i) => P(`   ${i+1}) ID=${o.id} NOMBRE="${o.nombre}" CODIGO=${o.codigo||"-"} ESTADO=${o.estado||"-"}`)); }
+      else P("→ Obras: NINGÚN DATO");
+      const MH = health.muestras.ultimas3Horas || [];
+      if (MH.length) { P("→ Horas (muestra 3):"); MH.forEach((h, i) => P(`   ${i+1}) ID=${h.id} trabajador=${h.trabajadorId} obra=${h.obraId} FECHA=${h.fecha} HORAS=${h.horas} TIPO=${h.tipo}`)); }
+      else P("→ Horas: NINGÚN DATO");
+      const MM = health.muestras.ultimos3Mov || [];
+      if (MM.length) { P("→ Movimientos (muestra 3):"); MM.forEach((m, i) => P(`   ${i+1}) ID=${m.id} TIPO=${m.tipo} IMPORTE=${m.importe}€ FECHA=${m.fecha} CONCEPTO="${m.concepto||"-"}"`)); }
+      else P("→ Movimientos: NINGÚN DATO");
+    }
+    P("");
+    // Comparativa BBDD real vs state en frontend
+    P("═══ COMPARATIVA: BBDD REAL vs TU APP (state) ═══");
+    const fallos = [];
+    function cmptab(nom, vreal, vstate) {
+      const ok = vreal === vstate;
+      if (!ok) fallos.push(nom);
+      P(`${nom}: BBDD=${vreal} · TuApp=${vstate} → ${ok ? "✅ COINCIDE (OK)" : "❌ NO COINCIDE (causa del fallo!)"}`);
+    }
+    cmptab("👷 Trabajadores", T.trabajadores || 0, state.trabajadores.length);
+    cmptab("🏢 Obras",        T.obras || 0,        state.obras.length);
+    cmptab("⏰ Horas",        T.horas || 0,        state.horas.length);
+    cmptab("💵 Movimientos",  T.movimientos || 0,  state.movimientos.length);
+    P("");
+    P("📊 TOTAL: BBDD=" + totalReal + " · TuApp=" + totalState + " → " + (totalReal === totalState ? "✅ 100% COINCIDE" : "❌ NO COINCIDEN"));
+    P("");
+    // Diagnóstico automático
+    P("═══ DIAGNÓSTICO AUTOMÁTICO ═══");
+    if (totalReal === 0) {
+      P("⚠️ CASO 1: LA BASE DE DATOS REAL ESTÁ COMPLETAMENTE VACÍA.");
+      P("   CAUSAS POSIBLES:");
+      P("   a) Tienes Render PERO NO CONFIGURASTE TURSO: Render usa SQLite efímero y se borra al redeployear.");
+      P("   b) Los datos realmente NUNCA se guardaron (el trabajador pulsó guardar pero devolvió 500 error).");
+      P("   c) Borraste la BBDD por error desde Turso.tech.");
+    } else if (!getToken() || !state.session?.role) {
+      P("⚠️ CASO 2: LA BBDD TIENE " + totalReal + " DATOS PERO TU NO ESTÁS LOGGEADO.");
+      P("   SOLUCIÓN: Pulsa 🚪 SALIR arriba → introduce PIN correcto.");
+    } else if (fallos.length) {
+      P("⚠️ CASO 3: BBDD (" + totalReal + " datos) ≠ TuApp (" + totalState + " datos). Las tablas que fallan: " + fallos.join(", "));
+      P("   CAUSAS POSIBLES:");
+      P("   a) Rol equivocado: estás en 👷 Trabajador pero no eres tú (solo puede ver SUS horas).");
+      P("   b) Caché del navegador: Pulsa 🔄 Sincronizar o [Aceptar] Hard Reset en Debug Móvil.");
+      P("   c) Render con SQLite local sin Turso: redeployearon y el servidor nuevo no tiene datos.");
+    } else {
+      P("✅ TODO COINCIDE 100% (BBDD " + totalReal + " = TuApp " + totalState + ").");
+      P("   Si creías que faltaban datos, posiblemente estás mirando otro periodo fecha o filtro activado (en Horas, Contabilidad, Cajas).");
+    }
+  } else {
+    P("❌ FALLO al llamar al endpoint /api/health/diagnostico:");
+    P("   Motivo: " + String(healthErr || "desconocido").slice(0, 500));
+  }
+  P("");
+  P("═══ PRUEBA 2: /api/sync (con tu token si hay login) ═══");
+  if (getToken()) {
+    let sync = null, syncErr = null;
+    try {
+      const u = new URL(API_BASE + "/api/sync", window.location.origin);
+      u.searchParams.set("_t", Date.now() + "_" + Math.random().toString(36).slice(2, 10));
+      const r = await fetch(u, { method: "GET", headers: { "Cache-Control": "no-store", "Pragma": "no-cache", "Accept": "application/json", "Authorization": "Bearer " + getToken() }, cache: "no-store" });
+      sync = await r.json();
+      if (!r.ok) throw new Error("HTTP " + r.status + " - " + (sync?.error || JSON.stringify(sync)).slice(0, 200));
+    } catch (e) { syncErr = e.message; }
+    if (sync) {
+      P("✅ /api/sync OK (HTTP 200)");
+      P("Rol según el servidor: " + (sync.currentUser?.role === "admin" ? "👑 ADMIN" : sync.currentUser?.role === "worker" ? "👷 TRABAJADOR (tid=" + (sync.currentUser?.trabajadorId || "-") + ")" : "—"));
+      P("Fecha respuesta servidor: " + (sync.generadoEn ? new Date(sync.generadoEn).toLocaleString("es-ES") : "—"));
+      P("Datos que EL SERVIDOR TE ENVÍA (tu usuario):");
+      P("👷 Trabajadores (recibidos): " + (Array.isArray(sync.trabajadores) ? sync.trabajadores.length : "ERROR NO ARRAY"));
+      P("🏢 Obras (recibidas):        " + (Array.isArray(sync.obras) ? sync.obras.length : "ERROR NO ARRAY"));
+      P("⏰ Horas (recibidas):        " + (Array.isArray(sync.horas) ? sync.horas.length : "ERROR NO ARRAY"));
+      P("💵 Movimientos (recibidos):  " + (Array.isArray(sync.movimientos) ? sync.movimientos.length : "ERROR NO ARRAY"));
+      const totalRecv = (sync.trabajadores?.length||0) + (sync.obras?.length||0) + (sync.horas?.length||0) + (sync.movimientos?.length||0);
+      P("📊 TOTAL RECIBIDOS: " + totalRecv);
+      if (health && health.ok) {
+        const rBBDD = sync._realTrabajadoresEnBBDD || health.tables.trabajadores || 0;
+        const oBBDD = sync._realObrasEnBBDD || health.tables.obras || 0;
+        const hBBDD = sync._realHorasEnBBDD || health.tables.horas || 0;
+        const mBBDD = sync._realMovEnBBDD || health.tables.movimientos || 0;
+        const totalBBDD2 = rBBDD + oBBDD + hBBDD + mBBDD;
+        P("");
+        P("🤝 COMPARATIVA FINAL (BBDD REAL vs LO QUE TÚ RECIBES vs TU APP):");
+        P("            Tabla        | BBDD_REAL | TÚ_RECIBES | TU_APP (state)");
+        P("            -------------|-----------|------------|----------------");
+        P(`            👷 Trabajadores| ${String(rBBDD).padStart(9," ")} | ${String(sync.trabajadores?.length||0).padStart(10," ")} | ${String(state.trabajadores.length).padStart(14," ")}`);
+        P(`            🏢 Obras       | ${String(oBBDD).padStart(9," ")} | ${String(sync.obras?.length||0).padStart(10," ")} | ${String(state.obras.length).padStart(14," ")}`);
+        P(`            ⏰ Horas       | ${String(hBBDD).padStart(9," ")} | ${String(sync.horas?.length||0).padStart(10," ")} | ${String(state.horas.length).padStart(14," ")}`);
+        P(`            💵 Movimientos | ${String(mBBDD).padStart(9," ")} | ${String(sync.movimientos?.length||0).padStart(10," ")} | ${String(state.movimientos.length).padStart(14," ")}`);
+        P(`            TOTALES        | ${String(totalBBDD2).padStart(9," ")} | ${String(totalRecv).padStart(10," ")} | ${String(totalState).padStart(14," ")}`);
+        P("");
+        if (sync.currentUser?.role === "worker") {
+          P("💡 Nota: Eres 👷 TRABAJador → EL SERVIDOR TE ENVÍA SOLO SUS COSAS (¡así está diseñado!).");
+          P("   Si quieres ver TODO, entra con el PIN 👑 ADMIN (1234 o el que configuraste).");
+        }
+      }
+    } else {
+      P("❌ /api/sync FALLÓ:");
+      P("   Motivo: " + String(syncErr || "desconocido").slice(0, 500));
+    }
+  } else P("⏭️ NO HAY TOKEN → no se ejecuta /api/sync (estás sin login).");
+  P("");
+  P("═══ ÚLTIMOS 10 ERRORES HTTP 400+ DETECTADOS ═══");
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.ULTIMO_ERROR) || "[]");
+    stored.forEach(e => { if (!ULTIMOS_ERRORES_FETCH.find(x => x.fecha === e.fecha)) ULTIMOS_ERRORES_FETCH.push(e); });
+    if (ULTIMOS_ERRORES_FETCH.length > 15) ULTIMOS_ERRORES_FETCH.length = 15;
+  } catch {}
+  if (ULTIMOS_ERRORES_FETCH.length) {
+    ULTIMOS_ERRORES_FETCH.slice(0, 10).forEach((e, i) => {
+      P(`${i+1}) [${new Date(e.fecha).toLocaleString("es-ES")}] ${String(e.url||"").slice(0,60)} → HTTP ${e.status}`);
+      P(`     ${String(e.body||"").slice(0, 180)}`);
+    });
+  } else P("✅ No hay errores HTTP guardados.");
+  P("");
+  P("══════════════════════════════════════════════════════════════════");
+  P("👋 FIN DEL INFORME. Pulsa 📋 COPIAR y pégame el texto completo en el chat.");
+  return L.join("\n");
+}
+
 /* ============ AUTH / LOGIN (cloud) ============ */
 function getAdminPin() { return state.adminPin || DEFAULT_ADMIN_PIN; }
 function saveSession() { localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(state.session)); }
@@ -696,6 +881,43 @@ function bindLoginEvents() {
 
   const btnFS = document.getElementById("btnForceSync");
   if (btnFS) btnFS.addEventListener("click", () => forceSyncUI());
+  const btnDC = document.getElementById("btnDiagnosticoCompleto");
+  if (btnDC) btnDC.addEventListener("click", async () => {
+    const dlg = document.getElementById("informeDiagnosticoDialog");
+    const txt = document.getElementById("diagnosticoTextarea");
+    const btnCopiar = document.getElementById("btnCopiarDiagnostico");
+    const btnOtra = document.getElementById("btnGenerarOtraVez");
+    const copiado = document.getElementById("diagnosticoEstadoCopiado");
+    if (copiado) copiado.classList.add("hidden");
+    txt.value = "⏳ Generando informe completo... espera 3 segundos...";
+    try { dlg.showModal(); } catch {}
+    const informe = await generarInformeDiagnosticoCompleto();
+    txt.value = informe;
+    if (btnCopiar && !btnCopiar.dataset.bound) {
+      btnCopiar.dataset.bound = "1";
+      btnCopiar.addEventListener("click", async () => {
+        try {
+          txt.select();
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(txt.value);
+          } else {
+            document.execCommand("copy");
+          }
+          if (copiado) {
+            copiado.classList.remove("hidden");
+            setTimeout(() => copiado.classList.add("hidden"), 8000);
+          }
+        } catch (e) { alert("No se pudo copiar al portapapeles: " + e.message + ". Hazlo manualmente."); }
+      });
+    }
+    if (btnOtra && !btnOtra.dataset.bound) {
+      btnOtra.dataset.bound = "1";
+      btnOtra.addEventListener("click", async () => {
+        txt.value = "⏳ Regenerando...";
+        txt.value = await generarInformeDiagnosticoCompleto();
+      });
+    }
+  });
   const btnDebugMovil = document.getElementById("btnDebugMovil");
   if (btnDebugMovil) btnDebugMovil.addEventListener("click", async () => {
     try {

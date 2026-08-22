@@ -282,6 +282,16 @@ app.get("/api/health/diagnostico", async (req, res) => {
       const row = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);
       adminPinExiste = !!row?.valor;
     } catch {}
+    // ✅ INCLUIR LAS 3 PRIMERAS FILAS DE CADA TABLA para ver si hay datos reales (NOMBRES)
+    const [
+      rowsTrabajadores, rowsObras, rowsHoras, rowsMov, rowsSettings
+    ] = await Promise.all([
+      dbAll("SELECT id, nombre, rol, activo FROM trabajadores ORDER BY nombre ASC LIMIT 3"),
+      dbAll("SELECT id, nombre, codigo, estado FROM obras ORDER BY createdAt DESC LIMIT 3"),
+      dbAll("SELECT id, trabajadorId, obraId, fecha, horas, tipo FROM horas ORDER BY createdAt DESC LIMIT 3"),
+      dbAll("SELECT id, tipo, importe, fecha, concepto, responsableId FROM movimientos ORDER BY createdAt DESC LIMIT 3"),
+      dbAll("SELECT clave, substr(valor, 1, 120) AS valor FROM settings ORDER BY clave ASC LIMIT 5"),
+    ]);
     const payload = {
       timestamp: d.toISOString(),
       ok: true,
@@ -294,6 +304,13 @@ app.get("/api/health/diagnostico", async (req, res) => {
         horas: Number(cHoras?.c ?? 0),
         movimientos: Number(cMovimientos?.c ?? 0),
         settings: Number(cSettings?.c ?? 0),
+      },
+      muestras: {
+        ultimos3Trabajadores: rowsTrabajadores,
+        ultimas3Obras: rowsObras,
+        ultimas3Horas: rowsHoras,
+        ultimos3Mov: rowsMov,
+        settings: rowsSettings,
       },
       movimientosPorTipo: categoriasMov,
       adminPinExiste,
