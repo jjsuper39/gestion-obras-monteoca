@@ -372,12 +372,25 @@ app.get("/api/sync", authMiddleware, handle(async (req, res) => {
   const horas = (await dbAll("SELECT * FROM horas ORDER BY fecha DESC, createdAt DESC")).map(normalizeHora);
   const movimientos = (await dbAll("SELECT * FROM movimientos ORDER BY fecha DESC, createdAt DESC")).map(normalizeMov);
   const row = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);
+
+  // ✅ [TESTIGO INQUEBRANTABLE de permisos + datos enviados]:
+  // El front compara y si ve BBDD > 0 pero recibidos=0, muestra banner con causa exacta.
+  const diagnosticoPermisos = [
+    `👤 Petición hecha por: role=${req.user.role}`,
+    req.user.role === "worker" ? `   · ID trabajador (según tu sesión JWT): ${req.user.trabajadorId || "—"}` : null,
+    `📊 BBDD REAL (Turso): ${_counters._realTrabajadoresEnBBDD} trab, ${_counters._realObrasEnBBDD} obras, ${_counters._realHorasEnBBDD} horas, ${_counters._realMovEnBBDD} mov.`,
+    `📦 LO QUE ENVÍO AHORA A TU FRONTEND: ${trabajadores.length} trab, ${obras.length} obras, ${horas.length} horas, ${movimientos.length} mov.`,
+    req.user.role === "worker" ? `ℹ️ Nota: eres TRABAJADOR → en esta versión se envía TODO. Si no lo ves en tu app, es un fallo de RENDER del frontend (no es el backend!)` :
+    `ℹ️ Nota: eres ADMIN → se envía TODO al 100%. Si no lo ves = fallo render frontend. Avisa en Debug Móvil → forzar repintado.`
+  ].filter(Boolean).join("\n");
+
   const resp = {
     trabajadores, obras, horas, movimientos,
     adminPin: req.user.role === "admin" ? (row?.valor || DEFAULT_ADMIN_PIN) : null,
     currentUser: req.user,
     generadoEn: new Date().toISOString(),
     ..._counters, // incluimos los contadores REALES para el front (debug móvil muestra comparación!)
+    diagnosticoPermisos, // 👈 LO MÁS IMPORTANTE: testigo que dice TODO
   };
   if (req.user.role === "admin") {
     try {

@@ -474,6 +474,15 @@ async function generarInformeDiagnosticoCompleto() {
     } catch (e) { syncErr = e.message; }
     if (sync) {
       P("✅ /api/sync OK (HTTP 200)");
+      // ✅ NUEVO: TESTIGO DIAGNÓSTICO PERMISOS (lo primero que ve el usuario para saber causa):
+      if (sync.diagnosticoPermisos) {
+        P("");
+        P("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        P("🔍 DIAGNÓSTICO DEL SERVIDOR (testigo inquebrantable):");
+        P(String(sync.diagnosticoPermisos));
+        P("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        P("");
+      }
       P("Rol según el servidor: " + (sync.currentUser?.role === "admin" ? "👑 ADMIN" : sync.currentUser?.role === "worker" ? "👷 TRABAJADOR (tid=" + (sync.currentUser?.trabajadorId || "-") + ")" : "—"));
       P("Fecha respuesta servidor: " + (sync.generadoEn ? new Date(sync.generadoEn).toLocaleString("es-ES") : "—"));
       P("Datos que EL SERVIDOR TE ENVÍA (tu usuario):");
@@ -783,9 +792,35 @@ async function loadAllData(silent = false, force = false) {
           obras: state.obras.length,
           horas: state.horas.length,
           movimientos: state.movimientos.length,
-        }
+        },
+        // NUEVO: Diagnóstico permisos DIRECTO del servidor (dice TODO)
+        diagnosticoPermisos: d.diagnosticoPermisos || "",
       };
       const diag = state._diagnosticoSync;
+      // ✅ BANNER GIGANTE ROJO NUEVO:
+      // Si BBDD REAL tiene datos (>=1 en cualquiera) PERO EL FRONT LOS RECIBIÓ VACÍOS:
+      // (este es EXACTAMENTE el caso que tienes tú ahora)
+      const bbddConDatos = (diag.realBBDD.trabajadores + diag.realBBDD.obras + diag.realBBDD.horas + diag.realBBDD.movimientos) > 0;
+      const frontVacio = (state.trabajadores.length + state.obras.length + state.horas.length + state.movimientos.length) === 0;
+      try {
+        const ban = document.getElementById("bannerDatosOcultos");
+        if (ban) {
+          if (bbddConDatos && frontVacio) {
+            const texto = [
+              "🚨 BBDD TIENE DATOS PERO TU APP NO LOS MUESTRA (FALLO RENDER FRONTEND):",
+              d.diagnosticoPermisos || "",
+              "",
+              "✅ SOLUCIÓN 1 SEGUNDO:",
+              "1) Pulsa CANCELAR / ACEPTAR de este mensaje.",
+              "2) Pulsa 🧐 DIAGNÓSTICO COMPLETO (botón azul arriba).",
+              "3) Selecciona todo el texto (mantener pulsar + Seleccionar todo) y cópialo → pégame lo aquí.",
+              "O BIEN: vuelve a pulsar 🔄 SINCRONIZAR y si no se pintan, refresca F5 (la 1ª vez lo pinta todo).",
+            ].join("\n");
+            ban.classList.remove("hidden");
+            ban.querySelector("span").textContent = texto;
+          } else ban.classList.add("hidden");
+        }
+      } catch {}
       const incongruencias = [];
       ["trabajadores","obras","horas","movimientos"].forEach(k => {
         const bbdd = Number(diag.realBBDD[k] || 0); const front = Number(diag.recibidosFront[k] || 0);
@@ -812,6 +847,38 @@ async function loadAllData(silent = false, force = false) {
       state.ultimaSync = new Date();
       try { actualizarBadgeUltimaSync(); } catch {}
       try { comprobarPerdidaDatosPotencial(); } catch {}
+      // ✅✨ FORZADO ABSOLUTO DE RENDER (NO PUEDE FALLAR NUNCA MÁS):
+      // Llamamos a renderAll() / renderWorker() DESPUÉS de actualizar los arrays state,
+      // para pintar lo que acabamos de descargar de Turso.
+      // Si NO se hace, los datos están en state PERO NO SE VEN (es exactamente tu caso!).
+      try {
+        if (typeof renderAll === "function" && isAdmin()) {
+          renderAll();
+        } else if (typeof renderWorker === "function" && isWorker()) {
+          renderWorker();
+        }
+        // Además repintamos la pestaña activa por si acaso:
+        try {
+          if (typeof cargarPestanaActual === "function") cargarPestanaActual();
+        } catch {}
+        // Actualizamos userBadge (arriba) para que muestre admin/trabajador correcto:
+        try { actualizarUserBadge(); } catch {}
+        // Actualizamos selects de responsables en movimientos y obras quick:
+        try { populateResponsablesSelect(); } catch {}
+        try { populateWorkerQuickForm(); } catch {}
+        try { renderObrasSelects(); } catch {}
+        // Aseguramos que el main NO está oculto si NO es la pantalla login:
+        try {
+          const login = document.getElementById("loginScreen");
+          const main = document.getElementById("appMain");
+          if (login && main) {
+            const loginOculto = login.classList?.contains("hidden") || getComputedStyle(login).display === "none";
+            if (loginOculto) main.classList.remove("hidden");
+          }
+        } catch {}
+      } catch (errRender) {
+        console.error("❌ ERROR FORZAR RENDER (nunca debería pasar):", errRender);
+      }
       return true;
     })();
     return await _loadLock;
@@ -1092,6 +1159,13 @@ function bindLoginEvents() {
         const fO = Array.isArray(syncResp.obras) ? syncResp.obras.length : 0;
         const fH = Array.isArray(syncResp.horas) ? syncResp.horas.length : 0;
         const fM = Array.isArray(syncResp.movimientos) ? syncResp.movimientos.length : 0;
+        // NUEVO: MOSTRAR EL TESTIGO DEL SERVIDOR DIAGNOSTICO PERMISOS (dice TODO):
+        if (syncResp.diagnosticoPermisos) {
+          lines.push("\n   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+          lines.push("   🔍 DIAGNÓSTICO DEL SERVIDOR (TESTIGO INQUEBRANTABLE):");
+          lines.push(String(syncResp.diagnosticoPermisos).split("\n").map(l => "   " + l).join("\n"));
+          lines.push("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+        }
         function compara(nom, bbdd, front) {
           const ok = bbdd === front;
           return `   · ${nom}: BBDD=${bbdd}  Recibidos tú=${front}  ${ok ? "✅ COINCIDE" : "❌ NO COINCIDE (¡causa del fallo!)"}`;

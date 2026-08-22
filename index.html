@@ -45,10 +45,15 @@
       <span style="flex:1;min-width:260px;"></span>
       <button class="btn" id="btnRestaurarBackupBanner" style="background:#ea580c;color:white;border-color:#c2410c;font-weight:bold;margin:0;" onclick="document.getElementById('btnRestaurarBackupAuto')?.click?.()">🔙 Recuperar ahora (1 click)</button>
     </div>
-    <!-- 🚨 BANNER PERMANENTE si NO HAY TOKEN (sesión perdida = causa datos a 0) -->
+    <!-- 🚨 BANNER PERMANENTE si NO HAY TOKEN (sesión perdida = causa datos 0) -->
     <div id="bannerSesionPerdida" class="hidden" style="width:100%;background:#7f1d1d;color:#fff;border:3px solid #b91c1c;border-radius:.8rem;padding:.8rem 1.2rem;margin:0 0 .8rem 0;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;font-weight:700;">
       <span style="flex:1;min-width:260px;"><b>⚠️ NO ESTÁS DENTRO DE TU CUENTA:</b> tu móvil ha perdido la sesión (sin token guardado). <u>Por eso ves TODOS los datos a 0.</u> Pulsa <b>IR A LOGIN</b> y vuelve a introducir tu PIN (admin: 1234 por defecto o trabajador PIN personal).</span>
       <button class="btn" style="background:#fff;color:#7f1d1d;border-color:#fff;font-weight:bold;margin:0;" onclick="document.getElementById('btnLogout').click();">🚪 Ir a Login</button>
+    </div>
+    <!-- 🚨 BANNER NUEVO: CASO EXACTO TUYO: BBDD tiene datos PERO front NO LOS MUESTRA (fallo render) -->
+    <div id="bannerDatosOcultos" class="hidden" style="width:100%;background:#991b1b;color:#fff;border:3px dashed #f43f5e;border-radius:.8rem;padding:.8rem 1.2rem;margin:0 0 .8rem 0;display:flex;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
+      <span style="flex:1;min-width:260px;white-space:pre-line;"></span>
+      <button class="btn" style="background:#fff;color:#991b1b;border-color:#fff;font-weight:bold;margin:0;" onclick="window.location.reload();">🔄 Forzar Recarga (F5)</button>
     </div>
     <header class="topbar">
       <div class="topbar-row">
