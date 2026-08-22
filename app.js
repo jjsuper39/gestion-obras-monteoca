@@ -3584,6 +3584,22 @@ function bindCajasEvents() {
     await refreshCajasFull();
   });
   els.btnCajasRefresh.addEventListener("click", () => refreshCajasFull());
+  // ✅ BOTÓN DIRECTO EN PESTAÑA CAJAS: 1 Click reparar NULLs de realizadoPorId (sin ir a ajustes):
+  const btnRC = document.getElementById("btnRepararCajasDirecto");
+  if (btnRC) btnRC.addEventListener("click", async () => {
+    if (!(await confirmAction("🔧 ¿Reparar Cajas de Socios?", "Esto arregla TODOS los movimientos antiguos que tienen 'Entregado Por / Caja' vacío (NULL). El ingreso de 6000€, los 40€ y los 50€ de entrega a Kevin se asignan a Juanje (socio principal). Así Juanje tendrá: Cobró = 6000€, Pagó = 90€, Saldo Caja = 5910€. ¿Continuar?"))) return;
+    try {
+      const r = await api("/api/cajas/reparar", { method: "POST", body: JSON.stringify({}) });
+      if (r?.ok) {
+        await alert(`✅ ¡${Number(r.corregidos)||0} movimientos arreglados!\n\nSocio principal = ${r.socioPrincipal || "Juanje"}\n\nPulsa Aceptar y luego:\n1) Pulsa 🔄 Actualizar (justo al lado de este botón)\n\nVerás a Juanje: Cobró = 6000€, Pagó = 90€, Saldo = 5910€ ✅`);
+        try {
+          state.cajasData = null; _cajasLoadLock = null;
+          await loadAllData(true, true);
+          await safeRenderAll(true);
+        } catch {}
+      } else alert("❌ Error: " + (r?.error || "sin mensaje"));
+    } catch (e) { alert("❌ Error reparando cajas: " + e.message); }
+  });
 }
 function bindMisEntregasEvents() {
   const btnRef = document.getElementById("btnRefreshEntregas");
