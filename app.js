@@ -164,6 +164,21 @@ function formatDate(iso) {
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
+// NUEVA FUNCIÓN QUE FALTABA (la causante de que renderTrabajadores se rompiera):
+function startOfMonthISO(d) {
+  const x = d ? new Date(d) : new Date();
+  x.setHours(12,0,0,0);
+  x.setDate(1);
+  return x.toISOString().slice(0, 10);
+}
+function endOfMonthISO(d) {
+  const x = d ? new Date(d) : new Date();
+  x.setHours(12,0,0,0);
+  x.setDate(1);
+  x.setMonth(x.getMonth()+1);
+  x.setDate(0);
+  return x.toISOString().slice(0, 10);
+}
 
 function currentMonthISO() {
   const d = new Date();
