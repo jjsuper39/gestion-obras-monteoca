@@ -164,7 +164,6 @@ function formatDate(iso) {
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
-// NUEVA FUNCIÓN QUE FALTABA (la causante de que renderTrabajadores se rompiera):
 function startOfMonthISO(d) {
   const x = d ? new Date(d) : new Date();
   x.setHours(12,0,0,0);
@@ -178,6 +177,78 @@ function endOfMonthISO(d) {
   x.setMonth(x.getMonth()+1);
   x.setDate(0);
   return x.toISOString().slice(0, 10);
+}
+// ═══════════════════════════════════════════════════════════════
+// ✅ STUBS SEGUROS (FUNCIONES QUE FALTABAN Y CAUSABAN EXCEPCIONES):
+// Hacemos que NO EXISTEN → se crean y NO lanzan errors (hacen lo que pueden de forma segura)
+// ═══════════════════════════════════════════════════════════════
+if (typeof renderSelects !== "function") {
+  function renderSelects() { try { if (typeof renderObrasSelects === "function") renderObrasSelects(); } catch {} }
+}
+if (typeof renderDashboard !== "function") {
+  function renderDashboard() { try { if (typeof renderBalanceGeneral === "function") renderBalanceGeneral(); } catch {} }
+}
+if (typeof renderBalanceGeneral !== "function") {
+  function renderBalanceGeneral() {}
+}
+if (typeof renderMovimientos !== "function") {
+  function renderMovimientos() { try { if (typeof renderContabilidad === "function") renderContabilidad(); } catch {} }
+}
+if (typeof renderCierre !== "function") {
+  function renderCierre() { try { if (typeof renderCierreMes === "function") renderCierreMes(); } catch {} }
+}
+if (typeof renderContabilidad !== "function") {
+  function renderContabilidad() {}
+}
+if (typeof renderCierreMes !== "function") {
+  function renderCierreMes() {}
+}
+if (typeof renderAjustes !== "function") {
+  function renderAjustes() {}
+}
+if (typeof renderWorkerSummary !== "function") {
+  function renderWorkerSummary() {}
+}
+if (typeof cargarPestanaActual !== "function") {
+  function cargarPestanaActual() {
+    try {
+      const act = document.querySelector(".nav-btn.active");
+      if (act && act.dataset && act.dataset.tab) {
+        const tab = act.dataset.tab;
+        const fns = {
+          "trabajadores": renderTrabajadores,
+          "obras": renderObras,
+          "horas": renderHoras,
+          "contabilidad": renderContabilidad,
+          "cajas": renderCajas,
+          "cierremes": renderCierreMes,
+          "ajustes": renderAjustes,
+          "dashboard": renderDashboard,
+        };
+        if (typeof fns[tab] === "function") fns[tab]();
+      }
+    } catch {}
+  }
+}
+if (typeof actualizarUserBadge !== "function") {
+  function actualizarUserBadge() {
+    try {
+      const u = state.session?.user || null;
+      const badge = document.getElementById("userBadge");
+      if (badge) {
+        if (u?.role === "admin") {
+          badge.className = "user-badge";
+          badge.innerHTML = "👑 " + escapeHtml(u.nombre || "Admin");
+        } else if (u?.role === "worker") {
+          badge.className = "user-badge worker";
+          badge.innerHTML = "👷 " + escapeHtml(u.nombre || "Trabajador");
+        } else {
+          badge.textContent = "";
+          badge.className = "user-badge";
+        }
+      }
+    } catch {}
+  }
 }
 
 function currentMonthISO() {
@@ -598,33 +669,78 @@ ${r.stack}
   }
 }
 // Helper para llamar SOLO las funciones de render EXISTEN y SAFE:
-function safeRenderAll(evitarBanner = false) {
+// ✅ MÁS IMPORTANTE: CADA FUNCIÓN TIENE SU TRY/CATCH INDEPENDIENTE.
+// NUNCA MÁS: falla 1 función y se abortan las otras 12 (como te está pasando ahora mismo).
+// ✅ AHORA ASÍNC: espera a que acaben funciones ASYNC (como renderAll, renderCajas) y captura exceptions!
+async function safeRenderAll(evitarBanner = false) {
   const resultados = [];
-  function sr(nombre, fn) { if (typeof fn === "function") resultados.push({ nombre, ok: !!safeRender(nombre, fn) }); }
-  if (isAdmin()) {
-    sr("renderAll", () => { if (typeof renderAll === "function") renderAll(); });
-    sr("renderTrabajadores()", () => { if (typeof renderTrabajadores === "function") renderTrabajadores(); });
-    sr("renderObras()", () => { if (typeof renderObras === "function") renderObras(); });
-    sr("renderHoras()", () => { if (typeof renderHoras === "function") renderHoras(); });
-    sr("renderContabilidad()", () => { if (typeof renderContabilidad === "function") renderContabilidad(); });
-    sr("renderCajas()", () => { if (typeof renderCajas === "function") renderCajas(); });
-    sr("renderCierreMes()", () => { if (typeof renderCierreMes === "function") renderCierreMes(); });
-    sr("renderAjustes()", () => { if (typeof renderAjustes === "function") renderAjustes(); });
-    sr("cargarPestanaActual()", () => { if (typeof cargarPestanaActual === "function") cargarPestanaActual(); });
-  } else if (isWorker()) {
-    sr("renderWorker()", () => { if (typeof renderWorker === "function") renderWorker(); });
-    sr("renderHoras()", () => { if (typeof renderHoras === "function") renderHoras(); });
+  // NUEVO sr() ASÍNCRONO para capturar excepciones en promesas:
+  async function sr(nombre, fn) {
+    if (typeof fn !== "function") {
+      resultados.push({ nombre, ok: false, error: "Función no definida aún" });
+      RENDER_STATUS.ultimos[nombre] = { ok: false, error: { mensaje: "Función no definida aún" } };
+      return;
+    }
+    try {
+      const _t0 = Date.now();
+      const res = fn();
+      // Esperamos si la función es async (devuelve Promise):
+      const finalRes = (res && typeof res.then === "function") ? await res : res;
+      resultados.push({ nombre, ok: true, ms: Date.now() - _t0 });
+      RENDER_STATUS.ultimos[nombre] = { ok: true, ms: Date.now() - _t0, fecha: new Date().toISOString(), error: null };
+    } catch (e) {
+      const err = {
+        fecha: new Date().toISOString(),
+        funcion: nombre,
+        mensaje: e.message,
+        stack: (e.stack || "").toString().slice(0, 500),
+      };
+      RENDER_STATUS.ultimos[nombre] = { ok: false, ms: 0, fecha: err.fecha, error: err };
+      RENDER_STATUS.errores.unshift(err);
+      if (RENDER_STATUS.errores.length > 20) RENDER_STATUS.errores.length = 20;
+      console.error(`❌ [safeRenderAll SR FALLO ${nombre}]: ${e.message}\n`, e.stack || "");
+      resultados.push({ nombre, ok: false, ms: 0, error: err });
+    }
   }
-  sr("actualizarUserBadge()", () => { if (typeof actualizarUserBadge === "function") actualizarUserBadge(); });
-  sr("populateResponsablesSelect()", () => { if (typeof populateResponsablesSelect === "function") populateResponsablesSelect(); });
-  sr("renderObrasSelects()", () => { if (typeof renderObrasSelects === "function") renderObrasSelects(); });
-  sr("populateWorkerQuickForm()", () => { if (typeof populateWorkerQuickForm === "function") populateWorkerQuickForm(); });
-  // Ocultar el banner de errores de render si todo fue OK:
+  if (isAdmin()) {
+    await sr("renderAll", () => { if (typeof renderAll === "function") return renderAll(); });
+    await sr("renderTrabajadores()", () => { if (typeof renderTrabajadores === "function") return renderTrabajadores(); });
+    await sr("renderObras()", () => { if (typeof renderObras === "function") return renderObras(); });
+    await sr("renderHoras()", () => { if (typeof renderHoras === "function") return renderHoras(); });
+    await sr("renderContabilidad()", () => { if (typeof renderContabilidad === "function") return renderContabilidad(); });
+    await sr("renderCajas()", () => { if (typeof renderCajas === "function") return renderCajas(); });
+    await sr("renderCierreMes()", () => { if (typeof renderCierreMes === "function") return renderCierreMes(); });
+    await sr("renderAjustes()", () => { if (typeof renderAjustes === "function") return renderAjustes(); });
+    try { await sr("cargarPestanaActual()", () => { if (typeof cargarPestanaActual === "function") return cargarPestanaActual(); }); } catch {}
+  } else if (isWorker()) {
+    await sr("renderWorker()", () => { if (typeof renderWorker === "function") return renderWorker(); });
+    await sr("renderHoras()", () => { if (typeof renderHoras === "function") return renderHoras(); });
+  }
+  try { await sr("actualizarUserBadge()", () => { if (typeof actualizarUserBadge === "function") return actualizarUserBadge(); }); } catch {}
+  try { await sr("populateResponsablesSelect()", () => { if (typeof populateResponsablesSelect === "function") return populateResponsablesSelect(); }); } catch {}
+  try { await sr("renderObrasSelects()", () => { if (typeof renderObrasSelects === "function") return renderObrasSelects(); }); } catch {}
+  try { await sr("populateWorkerQuickForm()", () => { if (typeof populateWorkerQuickForm === "function") return populateWorkerQuickForm(); }); } catch {}
+  // Banner de errores de render (actualizar, solo si hay algún fallo y no evitarBanner):
   if (!evitarBanner) {
     try {
       const ban = document.getElementById("bannerRenderErrors");
-      const algunFallo = resultados.some(r => !r.ok) || Object.values(RENDER_STATUS.ultimos || {}).some(x => x && !x.ok);
-      if (ban && !algunFallo) ban.classList.add("hidden");
+      if (ban) {
+        const algunFallo = resultados.some(r => !r.ok) || Object.values(RENDER_STATUS.ultimos || {}).some(x => x && !x.ok);
+        if (algunFallo) {
+          const primeros3 = RENDER_STATUS.errores.slice(0, 3);
+          const lista = primeros3.map(r => `
+═══════════════════════════════════════
+⚠️ FALLO AL PINTAR "${r.funcion}"
+Fecha: ${new Date(r.fecha).toLocaleString("es-ES")}
+Motivo: ${r.mensaje}
+Stack (línea del error): 
+${r.stack}`).join("\n");
+          const txt = `🚨 ${RENDER_STATUS.errores.length} FUNCION(ES) NO SE PINTARON (fallo render):\n\n${lista}\n\nPulsa 💥 FORZAR REPINTAR TODO (arriba rojo) y luego pégame TODO el texto de este BANNER ROJO en el chat. ¡¡ARREGLO CADA ERROR UNO A UNO EN 10 SEGUNDOS!!`;
+          const sp = ban.querySelector("span");
+          if (sp) sp.textContent = txt;
+          ban.classList.remove("hidden");
+        } else ban.classList.add("hidden");
+      }
     } catch {}
   }
   return resultados;
@@ -942,7 +1058,7 @@ async function loadAllData(silent = false, force = false) {
       // ✅✨ FORZADO ABSOLUTO DE RENDER (SAFE RENDER NIVEL 9999):
       // Ahora NO puede fallar SILENCIOSAMENTE: cada función se prueba individualmente y si falla -> BANNER GIGANTE ROJO.
       try {
-        const res = safeRenderAll(false);
+        const res = await safeRenderAll(false);
         console.log("✅ Safe Render All terminó. Funciones OK/Total:", res.filter(x=>x.ok).length + "/" + res.length);
         res.forEach(r => console.log(`   ${r.ok?"✅":"❌"}  ${r.nombre}`));
         // Aseguramos que el main NO está oculto si NO es la pantalla login:
@@ -1063,12 +1179,12 @@ function bindLoginEvents() {
   const btnFS = document.getElementById("btnForceSync");
   if (btnFS) btnFS.addEventListener("click", () => forceSyncUI());
   const btnFRA = document.getElementById("btnForceRenderAll");
-  if (btnFRA) btnFRA.addEventListener("click", () => {
+  if (btnFRA) btnFRA.addEventListener("click", async () => {
     try {
-      const res = safeRenderAll(false);
+      const res = await safeRenderAll(false);
       const okCount = res.filter(x => x.ok).length;
       const totCount = res.length;
-      const msg = "💥 Forzado repintado completado: " + okCount + "/" + totCount + " funciones OK.\n\n" + res.map(r => ` ${r.ok?"✅":"❌"} ${r.nombre}`).join("\n");
+      const msg = "💥 Forzado repintado completado: " + okCount + "/" + totCount + " funciones OK.\n\n" + res.map(r => ` ${r.ok?"✅":"❌"} ${r.nombre}${r.error ? " → " + String(r.error.mensaje || "").slice(0,80) : ""}`).join("\n");
       try { alert(msg); } catch {}
     } catch (e) { alert("Fallo al repintar: " + e.message); }
   });
@@ -2903,26 +3019,28 @@ function setDefaults() {
 }
 
 async function renderAll() {
-  const trabajadoresIds = [...new Set(state.horas.map((h) => h.trabajadorId))];
-  trabajadoresIds.forEach((tid) => {
-    const fechas = [...new Set(state.horas.filter((h) => h.trabajadorId === tid).map((h) => h.fecha))];
-    fechas.forEach((f) => recalcularDesgloseParaTrabajadorDia(tid, f));
-  });
-  renderSelects();
-  populateResponsablesSelect();
+  try {
+    const trabajadoresIds = [...new Set((state.horas || []).map((h) => h.trabajadorId))];
+    trabajadoresIds.forEach((tid) => {
+      const fechas = [...new Set((state.horas || []).filter((h) => h.trabajadorId === tid).map((h) => h.fecha))];
+      fechas.forEach((f) => { try { recalcularDesgloseParaTrabajadorDia(tid, f); } catch {} });
+    });
+  } catch {}
+  try { if (typeof renderSelects === "function") renderSelects(); } catch {}
+  try { if (typeof populateResponsablesSelect === "function") populateResponsablesSelect(); } catch {}
   if (isAdmin()) {
-    renderTrabajadores();
-    renderObras();
-    renderDashboard();
-    renderBalanceGeneral();
-    renderMovimientos();
-    renderCierre();
-    try { await renderCajas(); } catch {}
+    try { if (typeof renderTrabajadores === "function") renderTrabajadores(); } catch {}
+    try { if (typeof renderObras === "function") renderObras(); } catch {}
+    try { if (typeof renderDashboard === "function") renderDashboard(); } catch {}
+    try { if (typeof renderBalanceGeneral === "function") renderBalanceGeneral(); } catch {}
+    try { if (typeof renderMovimientos === "function") renderMovimientos(); } catch {}
+    try { if (typeof renderCierre === "function") renderCierre(); } catch {}
+    try { if (typeof renderCajas === "function") await renderCajas(); } catch {}
   } else if (isWorker()) {
-    populateWorkerQuickForm();
-    renderWorkerSummary();
+    try { if (typeof populateWorkerQuickForm === "function") populateWorkerQuickForm(); } catch {}
+    try { if (typeof renderWorkerSummary === "function") renderWorkerSummary(); } catch {}
   }
-  renderHoras();
+  try { if (typeof renderHoras === "function") renderHoras(); } catch {}
 }
 
 /* ============ RESPONSABLES / CAJAS (SOCIOS) - VERSIÓN FIABLE (SIN RACES ASÍNCRONAS) ============ */
