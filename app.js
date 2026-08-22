@@ -537,7 +537,84 @@ async function generarInformeDiagnosticoCompleto() {
   return L.join("\n");
 }
 
-/* ============ AUTH / LOGIN (cloud) ============ */
+/* ============ SAFE RENDER WRAPPER (DEFCON 1: NUNCA MÁS FALLOS SILENCIOSOS) ============ */
+// Este objeto registra el estado del último render de CADA FUNCIÓN individual (✅ OK o ❌ ERROR con stacktrace).
+// Antes: una función de render fallaba SILENCIOSAMENTE en try/catch general → ahora se ve TODO.
+const RENDER_STATUS = {
+  ultimos: {},
+  errores: [],
+};
+function safeRender(nombreFuncion, fn) {
+  try {
+    const _t0 = Date.now();
+    const resultado = fn();
+    RENDER_STATUS.ultimos[nombreFuncion] = { ok: true, ms: Date.now() - _t0, fecha: new Date().toISOString(), error: null };
+    return resultado;
+  } catch (e) {
+      const err = {
+        fecha: new Date().toISOString(),
+        funcion: nombreFuncion,
+        mensaje: e.message,
+        stack: (e.stack || "").toString().slice(0, 500),
+      };
+      RENDER_STATUS.ultimos[nombreFuncion] = { ok: false, ms: 0, fecha: err.fecha, error: err };
+      RENDER_STATUS.errores.unshift(err);
+      if (RENDER_STATUS.errores.length > 20) RENDER_STATUS.errores.length = 20;
+      console.error(`❌❌❌ [SAFE RENDER FALLO: ${nombreFuncion}: ${e.message}`, e.stack || "");
+      // BANNER GIGANTE para que LO VEAS SI O SI (no más fallos silenciosos):
+      try {
+        const ban = document.getElementById("bannerRenderErrors");
+        if (ban) {
+          ban.classList.remove("hidden");
+          const lista = RENDER_STATUS.errores.slice(0, 3).map(r => `
+═══════════════════════════════════════
+⚠️ FALLO AL PINTAR "${r.funcion}"
+Fecha: ${new Date(r.fecha).toLocaleString("es-ES")}
+Motivo: ${r.mensaje}
+Stack (línea del error): 
+${r.stack}
+`).join("\n");
+          const txt = `🚨 ${RENDER_STATUS.errores.length} FUNCION(ES) NO SE PINTARON (fallo render):\n\n${lista}\nPulsa 💥 FORZAR REPINTAR TODO (arriba, botón rojo en navbar) y si sigue fallando pégame esto en el chat para arreglarlo al instante.`;
+          const sp = ban.querySelector("span");
+          if (sp) sp.textContent = txt;
+        }
+      } catch {}
+      return false;
+  }
+}
+// Helper para llamar SOLO las funciones de render EXISTEN y SAFE:
+function safeRenderAll(evitarBanner = false) {
+  const resultados = [];
+  function sr(nombre, fn) { if (typeof fn === "function") resultados.push({ nombre, ok: !!safeRender(nombre, fn) }); }
+  if (isAdmin()) {
+    sr("renderAll", () => { if (typeof renderAll === "function") renderAll(); });
+    sr("renderTrabajadores()", () => { if (typeof renderTrabajadores === "function") renderTrabajadores(); });
+    sr("renderObras()", () => { if (typeof renderObras === "function") renderObras(); });
+    sr("renderHoras()", () => { if (typeof renderHoras === "function") renderHoras(); });
+    sr("renderContabilidad()", () => { if (typeof renderContabilidad === "function") renderContabilidad(); });
+    sr("renderCajas()", () => { if (typeof renderCajas === "function") renderCajas(); });
+    sr("renderCierreMes()", () => { if (typeof renderCierreMes === "function") renderCierreMes(); });
+    sr("renderAjustes()", () => { if (typeof renderAjustes === "function") renderAjustes(); });
+    sr("cargarPestanaActual()", () => { if (typeof cargarPestanaActual === "function") cargarPestanaActual(); });
+  } else if (isWorker()) {
+    sr("renderWorker()", () => { if (typeof renderWorker === "function") renderWorker(); });
+    sr("renderHoras()", () => { if (typeof renderHoras === "function") renderHoras(); });
+  }
+  sr("actualizarUserBadge()", () => { if (typeof actualizarUserBadge === "function") actualizarUserBadge(); });
+  sr("populateResponsablesSelect()", () => { if (typeof populateResponsablesSelect === "function") populateResponsablesSelect(); });
+  sr("renderObrasSelects()", () => { if (typeof renderObrasSelects === "function") renderObrasSelects(); });
+  sr("populateWorkerQuickForm()", () => { if (typeof populateWorkerQuickForm === "function") populateWorkerQuickForm(); });
+  // Ocultar el banner de errores de render si todo fue OK:
+  if (!evitarBanner) {
+    try {
+      const ban = document.getElementById("bannerRenderErrors");
+      const algunFallo = resultados.some(r => !r.ok) || Object.values(RENDER_STATUS.ultimos || {}).some(x => x && !x.ok);
+      if (ban && !algunFallo) ban.classList.add("hidden");
+    } catch {}
+  }
+  return resultados;
+}
+
 function getAdminPin() { return state.adminPin || DEFAULT_ADMIN_PIN; }
 function saveSession() { localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(state.session)); }
 
@@ -847,26 +924,12 @@ async function loadAllData(silent = false, force = false) {
       state.ultimaSync = new Date();
       try { actualizarBadgeUltimaSync(); } catch {}
       try { comprobarPerdidaDatosPotencial(); } catch {}
-      // ✅✨ FORZADO ABSOLUTO DE RENDER (NO PUEDE FALLAR NUNCA MÁS):
-      // Llamamos a renderAll() / renderWorker() DESPUÉS de actualizar los arrays state,
-      // para pintar lo que acabamos de descargar de Turso.
-      // Si NO se hace, los datos están en state PERO NO SE VEN (es exactamente tu caso!).
+      // ✅✨ FORZADO ABSOLUTO DE RENDER (SAFE RENDER NIVEL 9999):
+      // Ahora NO puede fallar SILENCIOSAMENTE: cada función se prueba individualmente y si falla -> BANNER GIGANTE ROJO.
       try {
-        if (typeof renderAll === "function" && isAdmin()) {
-          renderAll();
-        } else if (typeof renderWorker === "function" && isWorker()) {
-          renderWorker();
-        }
-        // Además repintamos la pestaña activa por si acaso:
-        try {
-          if (typeof cargarPestanaActual === "function") cargarPestanaActual();
-        } catch {}
-        // Actualizamos userBadge (arriba) para que muestre admin/trabajador correcto:
-        try { actualizarUserBadge(); } catch {}
-        // Actualizamos selects de responsables en movimientos y obras quick:
-        try { populateResponsablesSelect(); } catch {}
-        try { populateWorkerQuickForm(); } catch {}
-        try { renderObrasSelects(); } catch {}
+        const res = safeRenderAll(false);
+        console.log("✅ Safe Render All terminó. Funciones OK/Total:", res.filter(x=>x.ok).length + "/" + res.length);
+        res.forEach(r => console.log(`   ${r.ok?"✅":"❌"}  ${r.nombre}`));
         // Aseguramos que el main NO está oculto si NO es la pantalla login:
         try {
           const login = document.getElementById("loginScreen");
@@ -877,7 +940,7 @@ async function loadAllData(silent = false, force = false) {
           }
         } catch {}
       } catch (errRender) {
-        console.error("❌ ERROR FORZAR RENDER (nunca debería pasar):", errRender);
+        console.error("❌ ERROR FATAL safeRenderAll (nunca debería pasar):", errRender);
       }
       return true;
     })();
@@ -984,6 +1047,16 @@ function bindLoginEvents() {
 
   const btnFS = document.getElementById("btnForceSync");
   if (btnFS) btnFS.addEventListener("click", () => forceSyncUI());
+  const btnFRA = document.getElementById("btnForceRenderAll");
+  if (btnFRA) btnFRA.addEventListener("click", () => {
+    try {
+      const res = safeRenderAll(false);
+      const okCount = res.filter(x => x.ok).length;
+      const totCount = res.length;
+      const msg = "💥 Forzado repintado completado: " + okCount + "/" + totCount + " funciones OK.\n\n" + res.map(r => ` ${r.ok?"✅":"❌"} ${r.nombre}`).join("\n");
+      try { alert(msg); } catch {}
+    } catch (e) { alert("Fallo al repintar: " + e.message); }
+  });
   const btnDC = document.getElementById("btnDiagnosticoCompleto");
   if (btnDC) btnDC.addEventListener("click", async () => {
     const dlg = document.getElementById("informeDiagnosticoDialog");
@@ -1121,6 +1194,23 @@ function bindLoginEvents() {
         lines.push(`   · 💵 Movimientos:  ${healthResp.tables.movimientos} (Ingresos: ${healthResp.movimientosPorTipo.ingreso||0}, Gastos: ${healthResp.movimientosPorTipo.gasto||0})`);
         const totalReal = healthResp.tables.trabajadores + healthResp.tables.obras + healthResp.tables.horas + healthResp.tables.movimientos;
         lines.push(`   · TOTAL REAL: ${totalReal} ${totalReal === 0 ? "⚠️ (LA BASE DE DATOS REALMENTE ESTÁ VACÍA! Los datos NUNCA se guardaron en Turso!)" : "✅ (>0 hay datos)"}`);
+        // NUEVO: ESTADO SAFE RENDER DE CADA FUNCIÓN:
+        const keys = Object.keys(RENDER_STATUS.ultimos || {});
+        if (keys.length) {
+          lines.push("");
+          lines.push("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+          lines.push("   🎨 ESTADO DE CADA FUNCIÓN DE RENDER (SAFE RENDER NIVEL 9999):");
+          let cntOK = 0, cntErr = 0;
+          keys.forEach(k => {
+            const r = RENDER_STATUS.ultimos[k];
+            if (!r) return;
+            if (r.ok) { cntOK++; lines.push(`      ✅ ${String(k).padEnd(30," ")} · ${r.ms||0}ms OK`); }
+            else { cntErr++; lines.push(`      ❌ ${String(k).padEnd(30," ")} · FALLÓ → ${String(r.error?.mensaje||"").slice(0,120)}`); }
+          });
+          lines.push(`      Resumen: ✅ ${cntOK} OK  · ❌ ${cntErr} FALLADOS`);
+          lines.push("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+          if (cntErr>0) lines.push("   👉 SOLUCIÓN: pulsa 💥 FORZAR REPINTAR TODO (rojo, navbar) → si sigue ❌ pégame este informe para arreglarlo al instante!");
+        }
         // Muestras sin hardcodear nombres de columnas!
         function mostrarF(fila, max=18) {
           return Object.entries(fila || {}).map(([k,v]) => {
