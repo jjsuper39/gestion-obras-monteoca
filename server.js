@@ -76,8 +76,32 @@ async function dbRun(sql, params = []) {
 
 /* =============== EXPRESS =============== */
 const app = express();
-app.use(cors({ maxAge: 0 }));
+app.use(cors({ maxAge: 0, origin: true, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
+
+// ✅ [DIAGNÓSTICO USUARIO] LOG DE TODAS LAS PETICIONES API (para ver qué falla en Render):
+let CONTADOR_PETICIONES = 0;
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api")) return next();
+  CONTADOR_PETICIONES++;
+  const id = `#${String(CONTADOR_PETICIONES).padStart(4,"0")}`;
+  const auth = req.header("Authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7, 25) + "..." : "(sin token)";
+  const _inicio = Date.now();
+  console.log(`\n${id} ➡️  ${req.method} ${req.url}  [token=${token}]  [body length=${JSON.stringify(req.body||"").length}]`);
+  const _oldJson = res.json.bind(res);
+  res.json = (payload) => {
+    const dur = Date.now() - _inicio;
+    const user = res.locals?.user || req.user || null;
+    if (res.statusCode >= 400) {
+      console.error(`${id} ❌  RESPUESTA ${res.statusCode}: ${JSON.stringify(payload||"")}  [role=${user?.role||"—"} tid=${user?.trabajadorId||"—"} tiempo=${dur}ms]`);
+    } else {
+      console.log(`${id} ✅  RESPUESTA ${res.statusCode} OK  [role=${user?.role||"—"} tid=${user?.trabajadorId||"—"} tiempo=${dur}ms]`);
+    }
+    return _oldJson(payload);
+  };
+  next();
+});
 
 // ✅ CABECERAS ANTI-CACHÉ PARA MÓVILES (nunca más datos viejos):
 // (TODOS los endpoints /api/* devuelven datos SIN CACHÉ)

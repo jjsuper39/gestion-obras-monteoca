@@ -1,7 +1,10 @@
 const STORAGE_KEYS = {
   JWT_TOKEN: "go_jwt_token_v2",
   SESSION: "go_session_v2",
+  ULTIMO_ERROR: "go_ultimo_error_sync_v2",
 };
+
+const ULTIMOS_ERRORES_FETCH = []; // array de últimos errores para diagnóstico móvil (max 15)
 
 const DEFAULT_ADMIN_PIN = "1234";
 const HORAS_BASE_AL_DIA = 8;
@@ -114,6 +117,21 @@ async function api(endpoint, options = {}) {
     throw new Error(data?.error || "Sin autenticar");
   }
   if (!res.ok) {
+    // [DIAGNÓSTICO] Guardar errores HTTP 400+ para verlos en móvil Debug:
+    try {
+      const errObj = {
+        fecha: new Date().toISOString(),
+        url: u.toString().replace(window.location.origin,""),
+        status: res.status,
+        statusText: res.statusText,
+        body: (typeof data === "string") ? data.slice(0, 120) : (data?.error || JSON.stringify(data||"").slice(0,120)),
+        tokenOK: !!tok,
+        role: state.session?.role || "—",
+      };
+      ULTIMOS_ERRORES_FETCH.unshift(errObj);
+      if (ULTIMOS_ERRORES_FETCH.length > 15) ULTIMOS_ERRORES_FETCH.pop();
+      try { localStorage.setItem(STORAGE_KEYS.ULTIMO_ERROR, JSON.stringify(ULTIMOS_ERRORES_FETCH.slice(0,10))); } catch {}
+    } catch {}
     throw new Error((typeof data === "object" && data?.error) || data || `Error ${res.status}: ${res.statusText}`);
   }
   return data;
@@ -595,20 +613,49 @@ function bindLoginEvents() {
   const btnDebugMovil = document.getElementById("btnDebugMovil");
   if (btnDebugMovil) btnDebugMovil.addEventListener("click", async () => {
     try {
+      // Cargar últimos errores del storage (si hay):
+      try {
+        const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.ULTIMO_ERROR) || "[]");
+        stored.forEach(e => { if (!ULTIMOS_ERRORES_FETCH.find(x => x.fecha === e.fecha)) ULTIMOS_ERRORES_FETCH.push(e); });
+        if (ULTIMOS_ERRORES_FETCH.length > 15) ULTIMOS_ERRORES_FETCH.length = 15;
+      } catch {}
       const t = state.ultimaSync ? new Date(state.ultimaSync).toLocaleString("es-ES") : "NUNCA";
+      const totalDatos = (state.trabajadores.length) + (state.obras.length) + (state.horas.length) + (state.movimientos.length);
       const lines = [
-        "📱 Información depuración:",
-        `Modo móvil detectado: ${IS_MOBILE ? "SÍ (optimizado)" : "NO (modo PC)"}`,
-        `Navegador / SO: ${(navigator.userAgent||"").slice(0,80)}`,
-        `Conexión: ${navigator.onLine ? "ONLINE" : "SIN INTERNET"} ${navigator.connection && navigator.connection.effectiveType ? " ("+navigator.connection.effectiveType+")" : ""}`,
-        `Token guardado: ${getToken() ? "SÍ ("+String(getToken()).length+" chars)" : "NO"}`,
-        `Rol sesión: ${state.session?.role || "Ninguno"}`,
-        `Última sincro OK: ${t}`,
-        `Datos en RAM ahora: trabajadores=${state.trabajadores.length} · obras=${state.obras.length} · horas=${state.horas.length} · mov=${state.movimientos.length}`,
-        "",
-        "¿Qué quieres hacer?",
+        "══════════════════════════════════════════",
+        "📱  INFORME DE DIAGNÓSTICO APP",
+        "══════════════════════════════════════════",
+        `Modo móvil detectado: ${IS_MOBILE ? "✅ SÍ (optimizado)" : "❌ NO (modo PC)"}`,
+        `Navegador / SO: ${(navigator.userAgent||"").slice(0,70)}`,
+        `Conexión: ${navigator.onLine ? "✅ ONLINE" : "❌ SIN INTERNET"} ${navigator.connection && navigator.connection.effectiveType ? " ("+navigator.connection.effectiveType+")" : ""}`,
+        `Token JWT guardado: ${getToken() ? "✅ SÍ ("+String(getToken()).length+" chars)" : "❌ NO (tienes que iniciar sesión, es el motivo de que no veas datos!)"}`,
+        `Rol sesión: ${state.session?.role === "admin" ? "👑 ADMIN" : state.session?.role === "worker" ? "👷 TRABAJADOR" : "❌ NINGÚN (NO LOGGEADO → datos 0)"}`,
+        `ID trabajador sesión: ${state.session?.trabajadorId || "—"}`,
+        `Última sincro EXITOSA del servidor: ${t}`,
+        `Datos actuales en MEMORIA (frontend):`,
+        `   · Trabajadores: ${state.trabajadores.length}`,
+        `   · Obras:        ${state.obras.length}`,
+        `   · Horas:        ${state.horas.length}`,
+        `   · Movimientos:  ${state.movimientos.length}`,
+        `   · TOTAL:        ${totalDatos} ${totalDatos===0 ? "⚠️ (0 = NO HAY DATOS CARGADOS DEL SERVIDOR, MIRA LOS ERRORES DE ABAJO)" : "✅ (>0 hay datos)"}`,
       ];
-      const elegido = confirm(lines.join("\n") + "\n\nPulsa [Aceptar] para HARD RESET CACHÉ MÓVIL (cierra sesión y limpia datos del navegador).\nPulsa [Cancelar] para no hacer nada.");
+      if (ULTIMOS_ERRORES_FETCH.length) {
+        lines.push("", "══════════════════════════════════════════", "❌ ÚLTIMOS " + ULTIMOS_ERRORES_FETCH.length + " ERRORES DETECTADOS (la causa de que no veas datos!):", "══════════════════════════════════════════");
+        ULTIMOS_ERRORES_FETCH.slice(0,10).forEach((e, i) => {
+          lines.push(`${i+1}) [${new Date(e.fecha).toLocaleString("es-ES")}] ${e.method||"GET"} ${e.url} → HTTP ${e.status} ${e.statusText}`);
+          lines.push(`      Motivo: ${String(e.body||"").slice(0,200)}`);
+          lines.push(`      Token OK=${e.tokenOK} · Rol=${e.role}`);
+        });
+      } else {
+        lines.push("", "✅ No hay errores HTTP registrados. Todo OK.");
+      }
+      lines.push("", "══════════════════════════════════════════", "Qué hacer ahora:", "══════════════════════════════════════════");
+      lines.push("· Si NO TIENES TOKEN o ROL NINGÚN → 🚪 SALIR (arriba) y entra de nuevo (PIN).");
+      lines.push("· Si hay ERRORES 401/403 arriba → Token caducado o permisos mal: SALIR y volver a entrar.");
+      lines.push("· Si hay ERRORES 500 / 'Error interno' → MIRA LOGS de Render (pestaña Logs), líneas con ❌ te dirán la causa exacta SQL.");
+      lines.push("· Si DICE TODO OK pero datos 0 → Pulsa 🔄 SINCRONIZAR, y si no va entra en Turso.tech y mira tus tablas si tienen filas (quizás se borraron allá).", "", "¿Quieres ejecutar HARD RESET (limpiar todo y recargar) ahora?");
+      const msg = lines.join("\n");
+      const elegido = confirm(msg + "\n\nPulsa [Aceptar] = HARD RESET CACHÉ MÓVIL\nPulsa [Cancelar] = No hacer nada");
       if (!elegido) return;
       try { localStorage.clear(); } catch {}
       try { sessionStorage.clear(); } catch {}
