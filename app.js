@@ -1134,6 +1134,8 @@ async function saveMovCUD(op, data) {
   if (op === "PUT") return await api(`/api/movimientos/${data.id}`, { method: "PUT", body: JSON.stringify(data) });
   if (op === "DELETE") return await api(`/api/movimientos/${data.id}`, { method: "DELETE" });
 }
+// Alias por si alguien llama al nombre largo (igual que formulario entrega a cuenta):
+const saveMovimientoCUD = saveMovCUD;
 
 function bindLoginEvents() {
   document.querySelectorAll(".role-tab").forEach((tab) => {
