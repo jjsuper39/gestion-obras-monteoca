@@ -480,10 +480,18 @@
               </select>
             </div>
             <div>
-              <label for="movimientoResponsable">💵 Responsable / Caja Socio</label>
+              <label for="movimientoResponsable">💵 Responsable / Caja Socio (concepto nómina / préstamo)</label>
               <select id="movimientoResponsable">
                 <option value="">Sin asignar (general)</option>
               </select>
+              <p class="hint" style="font-size:.75rem;margin:.2rem 0 0 0;">👉 Quién es el PROPIETARIO del dinero (trabajador nómina / socio préstamo, etc.)</p>
+            </div>
+            <div>
+              <label for="movimientoRealizadoPor">👑 Entregado/Cobrado Por (MI CAJA / caja que paga/cobra)</label>
+              <select id="movimientoRealizadoPor">
+                <option value="">(Yo, el admin actual / caja general)</option>
+              </select>
+              <p class="hint" style="font-size:.75rem;margin:.2rem 0 0 0;">👉 De QUÉ CAJA SALE / ENTRA el dinero. Si pagas tú = selecciona tu nombre.</p>
             </div>
             <div>
               <label for="movimientoCategoria">Categoría *</label>
@@ -623,6 +631,28 @@
         </div>
       </div>
 
+      <div class="panel" style="border-color:#a855f7;background:#faf5ff;">
+        <div class="panel-head" style="border-bottom-color:#e9d5ff;">
+          <h3 style="color:#6b21a8;">👑 Saldos CAJAS PERSONALES SOCIOS (¿Qué paga/cobra cada socio de SU caja?)</h3>
+          <p class="hint">👉 Aquí ves los adelantos que TÚ entregaste de TU CAJA a los trabajadores (saldo disminuye tuyo, aumenta del trabajador).</p>
+        </div>
+        <div class="table-responsive">
+          <table class="table" id="cajasSociosTable">
+            <thead>
+              <tr>
+                <th>👑 Socio / Admin</th>
+                <th>🎖️ Rol</th>
+                <th>📥 Cobró en su Caja (Ingresos atribuidos)</th>
+                <th>📤 Pagó desde su Caja (Gastos atribuidos)</th>
+                <th>💰 Saldo Real Caja Personal (Cobró - Pagó)</th>
+                <th>🧾 Nº Movimientos</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-head">
           <h3 id="cajasMovTitle">🧾 Últimos Movimientos (todas las cajas)</h3>
@@ -726,6 +756,36 @@
     </form>
   </dialog>
 
+  <dialog id="detalleObraDialog" style="max-width: 900px; width: 95%;">
+    <form method="dialog" class="dialog-form" style="padding-bottom:.5rem;">
+      <h3 style="margin-top:0;" id="detalleObraTitulo">🏢 Detalle Obra</h3>
+      <div id="detalleObraSubDatos" class="obra-resumen-grid" style="margin-top:.5rem;"></div>
+
+      <div style="margin-top:1rem;">
+        <h4 style="margin:.2rem 0;">👷 Horas Ejecutadas por Trabajador</h4>
+        <div class="table-responsive" style="max-height: 220px; overflow:auto;">
+          <table class="table" id="detalleObraHorasTabla">
+            <thead><tr><th>👷 Trabajador</th><th>⏰ Horas</th><th>💰 Coste Total (€)</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="margin-top:1rem;">
+        <h4 style="margin:.2rem 0;">💸 Movimientos Económicos de la Obra</h4>
+        <div style="max-height: 280px; overflow:auto;">
+          <ul id="detalleObraMovimientos" class="list movimientos-list" style="padding:0; margin:0;"></ul>
+        </div>
+      </div>
+
+      <div style="margin-top:.8rem;" id="detalleObraNotas"></div>
+
+      <menu>
+        <button value="default" class="btn primary">Cerrar</button>
+      </menu>
+    </form>
+  </dialog>
+
   <dialog id="quickNewObraDialog">
     <form method="dialog" class="dialog-form" id="quickNewObraForm">
       <h3 style="margin-top:0;">🏗️ Crear Obra Rápida</h3>
@@ -769,6 +829,13 @@
           </select>
         </div>
         <div>
+          <label for="ecRealizadoPorId">👑 Entregado Por (MI CAJA / Admin que paga) *</label>
+          <select id="ecRealizadoPorId">
+            <option value="">(Yo, el admin actual)</option>
+          </select>
+          <p class="hint" style="font-size:.75rem;margin:.2rem 0 0 0;">👉 Si tu solo pagas (tu caja personal) → deja la opción por defecto. Si paga otro socio/admin → selecciona su nombre para que baje de SU caja.</p>
+        </div>
+        <div>
           <label for="ecObraId">🏢 Asociar a Obra (opcional)</label>
           <select id="ecObraId">
             <option value="">Sin asignar (general / nómina)</option>
@@ -803,10 +870,18 @@
           <input id="qmImporte" type="number" step="0.01" min="0.01" required placeholder="Ej: 1500" />
         </div>
         <div>
-          <label for="qmResponsable">💵 Responsable / Caja</label>
+          <label for="qmResponsable">💵 Responsable / Caja (concepto obra)</label>
           <select id="qmResponsable">
             <option value="">Sin asignar (general)</option>
           </select>
+          <p class="hint" style="font-size:.75rem;margin:.2rem 0 0 0;">👉 Quién es el PROPIETARIO del dinero (para nóminas: trabajador, para préstamo socio: socio, etc.)</p>
+        </div>
+        <div>
+          <label for="qmRealizadoPor">👑 Entregado/Cobrado Por (MI CAJA / caja que paga/cobra)</label>
+          <select id="qmRealizadoPor">
+            <option value="">(Yo, el admin actual / caja general)</option>
+          </select>
+          <p class="hint" style="font-size:.75rem;margin:.2rem 0 0 0;">👉 De QUÉ CAJA sale el dinero (si pagas tú = tu nombre). Si cobran a otro socio = selecciona su caja.</p>
         </div>
         <div>
           <label for="qmCategoria">Categoría *</label>

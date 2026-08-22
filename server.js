@@ -628,8 +628,15 @@ app.delete("/api/horas/:id", authMiddleware, async (req, res) => {
   const id = req.params.id;
   const h = await dbGet("SELECT * FROM horas WHERE id = ?", [id]);
   if (!h) return res.status(404).json({ error: "No existe" });
-  if (req.user.role !== "admin" && h.trabajadorId !== req.user.trabajadorId)
-    return res.status(403).json({ error: "No tuyo" });
+  if (req.user.role !== "admin") {
+    if (h.trabajadorId !== req.user.trabajadorId) return res.status(403).json({ error: "Esta hora no es tuya, no puedes borrarla." });
+    // ✅ SEGURIDAD: TRABAJADOR SOLO PUEDE BORRAR SUS HORAS DEL DÍA EN CURSO (nunca días anteriores):
+    const hoy = new Date();
+    const hoyISO = hoy.toISOString().slice(0, 10); // 2026-08-22
+    if (String(h.fecha || "").slice(0, 10) !== hoyISO) {
+      return res.status(403).json({ error: `Sólo puedes borrar horas de hoy (${hoyISO}). Esta hora es del día ${h.fecha}. Contacta con un administrador si cometiste un error días anteriores.` });
+    }
+  }
   const tid = h.trabajadorId; const fecha = h.fecha;
   await dbRun("DELETE FROM horas WHERE id = ?", [id]);
   await recalcularDesgloseParaTrabajadorDia(tid, fecha);
@@ -647,10 +654,13 @@ app.post("/api/movimientos", authMiddleware, requireAdmin, async (req, res) => {
   if (!["ingreso", "gasto"].includes(data.tipo))
     return res.status(400).json({ error: "Tipo debe ser ingreso/gasto" });
   const id = data.id || randomId();
+  // ✅ Si el admin NO especifica realizadoPorId -> se pone el ID del propio admin que está haciendo la petición (es decir, sale de SU caja):
+  const realizadoPorId = data.realizadoPorId || (req.user.role === "admin" ? (req.user.userId || req.user.trabajadorId || null) : null);
   try {
     await insertMov({
       id, fecha: data.fecha, tipo: data.tipo, importe: Number(data.importe),
       obraId: data.obraId || null, responsableId: data.responsableId || null,
+      realizadoPorId: realizadoPorId || null,
       categoria: data.categoria || "", formaPago: data.formaPago || "otro",
       concepto: data.concepto, referencia: data.referencia || "",
       createdAt: data.createdAt || new Date().toISOString(),
@@ -667,8 +677,8 @@ app.put("/api/movimientos/:id", authMiddleware, requireAdmin, async (req, res) =
   const data = req.body || {};
   const merged = { ...normalizeMov(m), ...data, id };
   await dbRun(
-    `UPDATE movimientos SET fecha = ?, tipo = ?, importe = ?, obraId = ?, responsableId = ?, categoria = ?, formaPago = ?, concepto = ?, referencia = ? WHERE id = ?`,
-    [merged.fecha, merged.tipo, Number(merged.importe) || 0, merged.obraId || null, merged.responsableId || null,
+    `UPDATE movimientos SET fecha = ?, tipo = ?, importe = ?, obraId = ?, responsableId = ?, realizadoPorId = ?, categoria = ?, formaPago = ?, concepto = ?, referencia = ? WHERE id = ?`,
+    [merged.fecha, merged.tipo, Number(merged.importe) || 0, merged.obraId || null, merged.responsableId || null, merged.realizadoPorId || null,
       merged.categoria || "", merged.formaPago || "otro", merged.concepto, merged.referencia || "", id]
   );
   res.json(normalizeMov(await dbGet("SELECT * FROM movimientos WHERE id = ?", [id])));
@@ -776,8 +786,8 @@ async function insertHora(h) {
 }
 async function insertMov(m) {
   return dbRun(
-    `INSERT INTO movimientos (id, fecha, tipo, importe, obraId, responsableId, categoria, formaPago, concepto, referencia, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [m.id, m.fecha, m.tipo, Number(m.importe) || 0, m.obraId || null, m.responsableId || null, m.categoria || "",
+    `INSERT INTO movimientos (id, fecha, tipo, importe, obraId, responsableId, realizadoPorId, categoria, formaPago, concepto, referencia, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [m.id, m.fecha, m.tipo, Number(m.importe) || 0, m.obraId || null, m.responsableId || null, m.realizadoPorId || null, m.categoria || "",
       m.formaPago || "otro", m.concepto, m.referencia || "", m.createdAt || new Date().toISOString()]
   );
 }
@@ -933,6 +943,19 @@ async function initDatabase() {
       console.log("✅ MIGRACIÓN OK: Columna responsableId añadida.");
     }
   } catch (e) { console.warn("⚠️ No se pudo comprobar migracion columna responsableId:", e.message); }
+  // ✅ Nueva migracion: columna `realizadoPorId` (QUIEN REALMENTE PAGÓ/COBRÓ el dinero físicamente = caja personal del socio/admin):
+  try {
+    const cols2 = await dbAll(`PRAGMA table_info(movimientos);`).catch(() => []);
+    const hasCol2 = (cols2 || []).some((c) => String(c.name || "").toLowerCase() === "realizadoporid");
+    if (!hasCol2) {
+      console.log("🔄 MIGRACIÓN: Añadiendo columna realizadoPorId a la tabla movimientos (caja socio que paga/cobra)...");
+      await dbRun("ALTER TABLE movimientos ADD COLUMN realizadoPorId TEXT;").catch(() => {});
+      try {
+        await dbRun("CREATE INDEX IF NOT EXISTS idx_movimientos_realizadopor ON movimientos (realizadoPorId);").catch(() => {});
+      } catch {}
+      console.log("✅ MIGRACIÓN OK: Columna realizadoPorId añadida.");
+    }
+  } catch (e) { console.warn("⚠️ No se pudo comprobar migracion columna realizadoPorId:", e.message); }
 }
 async function seedInitialData() {
   const pinRow = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);

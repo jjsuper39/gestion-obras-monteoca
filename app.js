@@ -1692,6 +1692,26 @@ function abrirEntregaCuenta(trabajadorId) {
   document.getElementById("ecImporte").value = "";
   document.getElementById("ecConcepto").value = "Adelanto nómina mes en curso";
   document.getElementById("ecStatus").textContent = "";
+  // ⬇️ NUEVO: Rellenar select "👑 Entregado Por (MI CAJA / Admin que paga)"
+  //   · Opciones = TODOS los trabajadores que son ADMIN / SOCIO.
+  //   · Por defecto: seleccionamos el USUARIO ADMIN ACTUAL que está loggeado.
+  const ecR = document.getElementById("ecRealizadoPorId");
+  if (ecR) {
+    const u = state.session?.user || null;
+    const admins = (state.trabajadores || []).filter(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
+    // Si no hay admins, mostrar todos los trabajadores:
+    const opciones = admins.length > 0 ? admins : (state.trabajadores || []);
+    const yoId = (u?.userId) || (u?.trabajadorId) || null;
+    let selHTML = `<option value="">(Yo, el admin actual)</option>` +
+      opciones.map(a => `<option value="${a.id}" ${a.id === yoId ? "selected" : ""}>👑 ${escapeHtml(a.nombre)} (${escapeHtml(a.rol || "admin/socio")})</option>`).join("");
+    if (yoId && !opciones.some(x => x.id === yoId)) {
+      // Si el usuario actual NO está en la lista (puede ser admin generico) lo añadimos al PRINCIPIO seleccionado:
+      selHTML = `<option value="">(Yo, el admin actual)</option>
+        <option value="${yoId}" selected>👑 (Tú, Admin actual)</option>` +
+        opciones.map(a => `<option value="${a.id}">👑 ${escapeHtml(a.nombre)} (${escapeHtml(a.rol || "admin/socio")})</option>`).join("");
+    }
+    ecR.innerHTML = selHTML;
+  }
   const sel = document.getElementById("ecObraId");
   sel.innerHTML = `<option value="">Sin asignar (general / nómina)</option>` +
     state.obras.map(o => `<option value="${o.id}">🏢 ${escapeHtml(o.nombre)} · ${escapeHtml(o.cliente||"")}</option>`).join("");
@@ -2192,12 +2212,19 @@ function renderHoras() {
     return;
   }
 
+  const hoyISO = todayISO(); // Fecha de HOY para determinar si el trabajador puede borrar (solo HOY)
   lista.forEach((h) => {
     const t = getTrabajadorById(h.trabajadorId);
     const o = getObraById(h.obraId);
     const li = document.createElement("li");
     li.className = "item";
     li.style.borderLeftColor = h.horasExtra > 0 ? "#ea580c" : "#2563eb";
+    const delHoy = isWorker() && String(h.fecha || "").slice(0, 10) === hoyISO;
+    // ✅ Si es TRABAJADOR: solo puede borrar horas de HOY (delHoy=true).
+    //    Si es ADMIN: puede borrar y editar todas las horas.
+    const accionesDelete = (isAdmin() || delHoy) ?
+      `<button class="btn small danger" data-del-hora="${h.id}" title="${delHoy ? "Borrar esta hora de hoy (error apunte)" : "Eliminar registro"}">${isWorker() ? "🗑️ Deshacer (hoy)" : "🗑️ Eliminar"}</button>` :
+      `<p style="margin:0;font-size:.8rem;color:#64748b;" class="hint">(Solo admin puede borrar horas de días anteriores)</p>`;
     li.innerHTML = `
       <div class="item-header">
         <div>
@@ -2205,6 +2232,7 @@ function renderHoras() {
           <div class="meta-tags">
             <span class="tag turno-normal">${h.horasBase}h base</span>
             ${h.horasExtra > 0 ? `<span class="tag turno-extra">${h.horasExtra}h extra</span>` : ""}
+            ${isWorker() && delHoy ? `<span class="tag" style="background:#dcfce7;color:#166534;">✅ Se puede borrar (hoy)</span>` : ""}
           </div>
         </div>
         <div style="text-align:right;">
@@ -2218,7 +2246,7 @@ function renderHoras() {
       ${h.notas ? `<p>📝 ${escapeHtml(h.notas)}</p>` : ""}
       <div class="item-actions">
         ${isAdmin() ? `<button class="btn small primary" data-edit-hora="${h.id}">✏️ Editar</button>` : ""}
-        <button class="btn small danger" data-del-hora="${h.id}">🗑️ Eliminar</button>
+        ${accionesDelete}
       </div>`;
     ul.appendChild(li);
   });
@@ -2250,6 +2278,8 @@ function fillMovimientoForm(m) {
   els.movimientoImporte.value = m.importe || "";
   els.movimientoObra.value = m.obraId || "";
   els.movimientoResponsable.value = m.responsableId || "";
+  const elReal = document.getElementById("movimientoRealizadoPor");
+  if (elReal && m.realizadoPorId) elReal.value = m.realizadoPorId;
   els.movimientoCategoria.value = m.categoria || "";
   els.movimientoFormaPago.value = m.formaPago || "otro";
   els.movimientoConcepto.value = m.concepto || "";
@@ -2260,6 +2290,10 @@ function fillMovimientoForm(m) {
 async function onSubmitMovimiento(e) {
   e.preventDefault();
   const id = els.movimientoId.value || null;
+  const elReal = document.getElementById("movimientoRealizadoPor");
+  const _u = state.session?.user || null;
+  const yoId = (_u?.userId) || (_u?.trabajadorId) || null;
+  const realizadoPorId = (elReal?.value ? elReal.value : yoId) || null;
   const data = {
     id: id || undefined,
     fecha: els.movimientoFecha.value,
@@ -2267,6 +2301,7 @@ async function onSubmitMovimiento(e) {
     importe: Number(els.movimientoImporte.value) || 0,
     obraId: els.movimientoObra.value || null,
     responsableId: els.movimientoResponsable.value || null,
+    realizadoPorId: realizadoPorId || null,
     categoria: els.movimientoCategoria.value,
     formaPago: els.movimientoFormaPago.value || "otro",
     concepto: els.movimientoConcepto.value.trim(),
@@ -2742,12 +2777,17 @@ async function submitQuickMov() {
   const importe = Number(els.qmImporte.value) || 0;
   const concepto = (els.qmConcepto.value || "").trim();
   if (!obraId || importe <= 0 || !concepto) return false;
+  const _u = state.session?.user || null;
+  const yoId = (_u?.userId) || (_u?.trabajadorId) || null;
+  const _selReal = document.getElementById("qmRealizadoPor");
+  const realizadoPorId = (_selReal?.value ? _selReal.value : yoId) || null;
   const data = {
     fecha: els.qmFecha.value || todayISO(),
     tipo,
     importe,
     obraId,
     responsableId: els.qmResponsable.value || null,
+    realizadoPorId: realizadoPorId || null,
     categoria: els.qmCategoria.value,
     formaPago: els.qmFormaPago.value || "otro",
     concepto,
@@ -2934,12 +2974,17 @@ function bindGeneralEvents() {
       if (!(importe > 0)) { setStatus(stEC, "Importe incorrecto", true); return; }
       try {
         setStatus(stEC, "⏳ Guardando entrega a cuenta...", false);
+        const _u = state.session?.user || null;
+        const yoId = (_u?.userId) || (_u?.trabajadorId) || null;
+        const _selRealizadoPor = document.getElementById("ecRealizadoPorId");
+        const realizadoPorId = (_selRealizadoPor?.value ? _selRealizadoPor.value : yoId) || null;
         const payload = {
           fecha: document.getElementById("ecFecha").value || todayISO(),
           tipo: "gasto",
           importe: importe.toFixed(2),
           obraId: document.getElementById("ecObraId").value || "",
           responsableId: trabajadorId,
+          realizadoPorId: realizadoPorId || null,
           categoria: "nomina",
           formaPago: document.getElementById("ecFormaPago").value || "efectivo",
           concepto: document.getElementById("ecConcepto").value.trim() || "Adelanto nómina / entrega a cuenta",
@@ -3051,11 +3096,20 @@ let _cajasLoadLock = null;
 function populateResponsablesSelect() {
   try {
     const opts = ['<option value="">Sin asignar (general)</option>'];
+    const optsSocios = ['<option value="">(Yo, el admin actual)</option>'];
+    const _u = state.session?.user || null;
+    const yoId = (_u?.userId) || (_u?.trabajadorId) || null;
     getTrabajadoresActivos().forEach(t => {
       if (!t || !t.id) return;
       const rolLabel = t.rol === "admin" ? "👑 Socio/Admin" : "👷 Trabajador";
       opts.push(`<option value="${escapeHtml(t.id)}">${rolLabel} · ${escapeHtml(t.nombre || "?")}</option>`);
+      const esSocio = String(t.rol || "").toLowerCase() === "admin" || String(t.rol || "").toLowerCase() === "socio";
+      if (esSocio) optsSocios.push(`<option value="${escapeHtml(t.id)}" ${t.id === yoId ? "selected" : ""}>👑 ${escapeHtml(t.nombre || "?")} (${escapeHtml(t.rol || "socio")})</option>`);
     });
+    if (yoId && !optsSocios.some(o => o.includes(`value="${yoId}"`))) {
+      // Si soy admin genérico y NO estoy en trabajadores (soy el admin PIN principal), me añado al PRINCIPIO:
+      optsSocios.splice(1, 0, `<option value="${yoId}" selected>👑 (Tú, Admin actual - caja general)</option>`);
+    }
     if (els.movimientoResponsable) {
       const prev = els.movimientoResponsable.value;
       els.movimientoResponsable.innerHTML = opts.join("");
@@ -3066,6 +3120,30 @@ function populateResponsablesSelect() {
       els.qmResponsable.innerHTML = opts.join("");
       if (prev2) els.qmResponsable.value = prev2;
     }
+    // ✅ NUEVOS selects: RealizadoPor (QUIEN COBRA/PAGA = caja personal)
+    const qmReal = document.getElementById("qmRealizadoPor");
+    if (qmReal) {
+      const prev = qmReal.value;
+      qmReal.innerHTML = optsSocios.join("");
+      if (prev) qmReal.value = prev;
+      // Si no hay nada seleccionado, elige el admin actual (yo):
+      if (!qmReal.value && yoId) {
+        if (qmReal.querySelector(`option[value="${yoId}"]`)) qmReal.value = yoId;
+      }
+    }
+    const movReal = document.getElementById("movimientoRealizadoPor");
+    if (movReal) {
+      const prev3 = movReal.value;
+      movReal.innerHTML = optsSocios.join("");
+      if (prev3) movReal.value = prev3;
+      if (!movReal.value && yoId) {
+        if (movReal.querySelector(`option[value="${yoId}"]`)) movReal.value = yoId;
+      }
+    }
+    const ecReal = document.getElementById("ecRealizadoPorId");
+    // OJO: ecRealizadoPorId se rellena en abrirEntregaCuenta() individualmente cada vez que abre
+    // pero si ya existía valor lo restauramos:
+    // (no hace falta aquí, solo para el fill inicial de qmRealizadoPor)
   } catch (e) { console.warn("populateResponsablesSelect:", e); }
 }
 
@@ -3152,8 +3230,69 @@ function renderCajasSaldosTable() {
       }
       renderCajasMovimientos();
       renderCajasSaldosTable();
+      renderCajasSociosTable();
     });
   });
+}
+// ✅ NUEVA: Saldos de CAJA PERSONAL por Socio/Admin (lo que realmente paga o cobra cada socio de su bolsillo)
+function renderCajasSociosTable() {
+  if (!isAdmin()) return;
+  const tbl = document.getElementById("cajasSociosTable");
+  if (!tbl) return;
+  const tbody = tbl.querySelector("tbody");
+  if (!tbody) return;
+  // Agrupar por realizadoPorId:
+  const { desde, hasta } = state.filtros.cajas || {};
+  let movs = [...(state.movimientos || [])];
+  if (desde) movs = movs.filter((m) => (m.fecha || "") >= desde);
+  if (hasta) movs = movs.filter((m) => (m.fecha || "") <= hasta);
+  // Solo movimientos que TIENEN socio asignado (realizadoPorId):
+  const agrupado = {};
+  movs.forEach((m) => {
+    if (!m.realizadoPorId) return;
+    if (!agrupado[m.realizadoPorId]) {
+      agrupado[m.realizadoPorId] = { trabajadorId: m.realizadoPorId, ingresos: 0, gastos: 0, numMov: 0 };
+    }
+    agrupado[m.realizadoPorId].numMov++;
+    if (String(m.tipo || "").toLowerCase() === "ingreso") agrupado[m.realizadoPorId].ingresos += Number(m.importe) || 0;
+    else agrupado[m.realizadoPorId].gastos += Number(m.importe) || 0;
+  });
+  const filas = Object.values(agrupado).map((r) => {
+    const t = getTrabajadorById(r.trabajadorId);
+    return {
+      ...r,
+      nombre: t?.nombre || `(Socio ID: ${String(r.trabajadorId).slice(0,6)}...)`,
+      rol: t?.rol || (t?.id ? "socio" : "desconocido"),
+      saldo: (r.ingresos || 0) - (r.gastos || 0),
+    };
+  }).sort((a,b) => String(b.nombre || "").localeCompare(a.nombre || ""));
+  // Añadimos los socios/admins que NO tengan movimientos aun (saldos 0):
+  (state.trabajadores || []).forEach(t => {
+    if (String(t.rol || "").toLowerCase() === "admin" || String(t.rol || "").toLowerCase() === "socio") {
+      if (!filas.some(x => x.trabajadorId === t.id)) filas.push({
+        trabajadorId: t.id,
+        nombre: t.nombre,
+        rol: t.rol || "socio",
+        ingresos: 0, gastos: 0, saldo: 0, numMov: 0,
+      });
+    }
+  });
+  if (filas.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">Sin movimientos por socio. 💡 Pulsa 💸 Entrega a Cuenta en 👷 Trabajadores y se verá aquí la salida de TU caja (socio).</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filas.map(r => {
+    const rolBadge = r.rol === "admin" ? `<span class="role-badge admin" style="margin:0">👑 Socio</span>` : `<span class="role-badge worker" style="margin:0">👷 ${escapeHtml(r.rol || "—")}</span>`;
+    const saldoCls = (r.saldo || 0) >= 0 ? "text-green" : "text-red";
+    return `<tr style="background:#fff;">
+      <td><strong style="color:#6b21a8;">${escapeHtml(r.nombre || "")}</strong></td>
+      <td>${rolBadge}</td>
+      <td class="text-green">${formatMoney(r.ingresos || 0)}</td>
+      <td class="text-red">${formatMoney(r.gastos || 0)}</td>
+      <td class="${saldoCls}"><strong>${formatMoney(r.saldo || 0)}</strong></td>
+      <td class="text-muted">${r.numMov || 0}</td>
+    </tr>`;
+  }).join("");
 }
 function renderCajasMovimientos() {
   if (!isAdmin() || !els.cajasMovimientosList || !els.cajasMovTitle) return;
@@ -3176,6 +3315,7 @@ function renderCajasMovimientos() {
   els.cajasMovimientosList.innerHTML = movs.slice(0, 100).map((m) => {
     const ob = getObraById(m.obraId);
     const resp = m.responsableId ? getTrabajadorById(m.responsableId) : null;
+    const real = m.realizadoPorId ? getTrabajadorById(m.realizadoPorId) : null;
     const isIng = m.tipo === "ingreso";
     const sign = isIng ? "+" : "-";
     const colorCls = isIng ? "text-green" : "text-red";
@@ -3183,7 +3323,7 @@ function renderCajasMovimientos() {
     return `<li class="list-item">
       <div>
         <strong class="${colorCls}">${icon} ${sign}${formatMoney(Number(m.importe) || 0)}</strong>
-        <div class="text-muted small">${formatDate(m.fecha)} · ${CATEGORIAS_MOV[m.categoria] || m.categoria || "Sin categ."} ${resp ? ` · 💵 ${escapeHtml(resp.nombre)}` : ""}</div>
+        <div class="text-muted small">${formatDate(m.fecha)} · ${CATEGORIAS_MOV[m.categoria] || m.categoria || "Sin categ."} ${resp ? ` · 💵 ${escapeHtml(resp.nombre)}` : ""} ${real ? ` · 👑 ${isIng ? "Cobrado por" : "Pagado por"}: ${escapeHtml(real.nombre)}` : ""}</div>
         <div>${escapeHtml(m.concepto || "")} ${ob ? `<span class="text-muted small"> · 🏗️ ${escapeHtml(ob.nombre)}</span>` : ""}</div>
       </div>
     </li>`;
@@ -3198,6 +3338,7 @@ async function renderCajas(options = {}) {
     await loadCajasData(force);
     renderCajasGlobalCards();
     renderCajasSaldosTable();
+    renderCajasSociosTable(); // ✅ NUEVA tabla saldos por caja personal de socio
     renderCajasMovimientos();
   } catch (e) {
     console.warn("renderCajas error:", e);
