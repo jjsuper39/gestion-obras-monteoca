@@ -175,8 +175,38 @@ app.post("/api/auth/admin-pin", async (req, res) => {
   const row = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);
   const adminPin = row?.valor || DEFAULT_ADMIN_PIN;
   if (String(adminPin) !== pin) return res.status(401).json({ error: "PIN incorrecto" });
-  const token = signToken({ role: "admin", scope: "super", iss: "go-v2" });
-  res.json({ token, session: { role: "admin", trabajadorId: null } });
+
+  // ✅ IMPORTANTE: Al acceder por PIN global (sin usuario seleccionado), BUSCAMOS el PRIMER ADMIN/SOCIO de la tabla trabajadores
+  // para rellenar SIEMPRE userId, nombre, trabajadorId en el JWT. Así NO HABRÁ userId=null ni nombre=null (era el fallo anterior).
+  let adminUser = await dbGet(`SELECT id, nombre, rol FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
+  if (!adminUser) {
+    // Si no hay ninguno aún (tabla vacía), creamos un admin ficticio para que no quede null:
+    adminUser = { id: "admin-default", nombre: "Administrador", rol: "admin" };
+  }
+  const userId = String(adminUser.id);
+  const nombre = String(adminUser.nombre || "Administrador");
+  const rol = "admin";
+
+  const token = signToken({
+    role: rol,
+    scope: "super",
+    iss: "go-v2",
+    userId: userId,
+    trabajadorId: userId,
+    nombre: nombre,
+    login: "admin-pin",
+    rolReal: String(adminUser.rol || rol),
+  });
+  res.json({
+    token,
+    session: {
+      role: rol,
+      userId: userId,
+      trabajadorId: userId,
+      nombre: nombre,
+      rolReal: String(adminUser.rol || rol),
+    }
+  });
 });
 
 app.post("/api/auth/worker", async (req, res) => {
@@ -185,9 +215,31 @@ app.post("/api/auth/worker", async (req, res) => {
   if (!t) return res.status(404).json({ error: "Usuario no encontrado" });
   if (t.activo === 0) return res.status(403).json({ error: "Usuario dado de baja" });
   if (String(t.pin || "") !== String(pin || "")) return res.status(401).json({ error: "PIN incorrecto" });
-  const role = t.rol === "admin" ? "admin" : "worker";
-  const token = signToken({ role, trabajadorId, scope: role, iss: "go-v2" });
-  res.json({ token, session: { role, trabajadorId } });
+  const role = (String(t.rol || "").toLowerCase() === "admin" || String(t.rol || "").toLowerCase() === "socio") ? "admin" : "worker";
+  const userId = String(t.id);
+  const nombre = String(t.nombre || "Trabajador");
+
+  // ✅ JWT SIEMPRE incluye userId, nombre, trabajadorId y role. NUNCA MÁS null.
+  const token = signToken({
+    role,
+    scope: role,
+    iss: "go-v2",
+    userId: userId,
+    trabajadorId: userId,
+    nombre: nombre,
+    login: "worker",
+    rolReal: String(t.rol || (role === "admin" ? "admin" : "trabajador")),
+  });
+  res.json({
+    token,
+    session: {
+      role,
+      userId: userId,
+      trabajadorId: userId,
+      nombre: nombre,
+      rolReal: String(t.rol || ""),
+    }
+  });
 });
 
 app.post("/api/auth/cambiar-pin-admin", authMiddleware, requireAdmin, async (req, res) => {

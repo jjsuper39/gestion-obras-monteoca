@@ -941,8 +941,23 @@ async function loginAdmin(pin) {
   try {
     const res = await api("/api/auth/admin-pin", { method: "POST", body: JSON.stringify({ pin }) });
     setToken(res.token);
-    state.session = res.session || { role: "admin", trabajadorId: null };
+    const ses = res.session || { role: "admin", trabajadorId: null };
+    // ✅ GUARDAR SIEMPRE en user todos los campos (compatibilidad con todo el código):
+    ses.user = ses.user || {
+      userId: ses.userId || ses.trabajadorId || null,
+      trabajadorId: ses.trabajadorId || ses.userId || null,
+      nombre: ses.nombre || "Administrador",
+      role: ses.role || "admin",
+      rolReal: ses.rolReal || "admin",
+    };
+    // Asegurar que SIEMPRE hay userId y nombre aunque el backend anterior lo devolviera mal (modo fallback):
+    if (!ses.user.userId && !ses.user.trabajadorId) {
+      socioPrincipal = (state.trabajadores || []).find(x => String(x.rol || "").toLowerCase() === "admin" || String(x.rol || "").toLowerCase() === "socio");
+      if (socioPrincipal) { ses.user.userId = socioPrincipal.id; ses.user.trabajadorId = socioPrincipal.id; ses.user.nombre = socioPrincipal.nombre; ses.user.rolReal = socioPrincipal.rol; }
+    }
+    state.session = ses;
     saveSession();
+    console.log("🔐 [Login Admin] Sesión nueva:", state.session);
     return true;
   } catch (e) {
     return false;
@@ -952,8 +967,17 @@ async function loginWorker(trabajadorId, pin) {
   try {
     const res = await api("/api/auth/worker", { method: "POST", body: JSON.stringify({ trabajadorId, pin }) });
     setToken(res.token);
-    state.session = res.session || { role: "worker", trabajadorId };
+    const ses = res.session || { role: "worker", trabajadorId };
+    ses.user = ses.user || {
+      userId: ses.userId || trabajadorId || null,
+      trabajadorId: ses.trabajadorId || trabajadorId || null,
+      nombre: ses.nombre || "Trabajador",
+      role: ses.role || "worker",
+      rolReal: ses.rolReal || "trabajador",
+    };
+    state.session = ses;
     saveSession();
+    console.log("👷 [Login Trabajador] Sesión nueva:", state.session);
     return true;
   } catch (e) {
     return false;
