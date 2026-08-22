@@ -306,15 +306,13 @@ app.get("/api/health/diagnostico", handle(async (req, res) => {
       adminPinExiste = !!row?.valor;
     } catch {}
     // ✅ INCLUIR LAS 3 PRIMERAS FILAS DE CADA TABLA para ver si hay datos reales (NOMBRES)
-    const [
-      rowsTrabajadores, rowsObras, rowsHoras, rowsMov, rowsSettings
-    ] = await Promise.all([
-      dbAll("SELECT id, nombre, rol, activo FROM trabajadores ORDER BY nombre ASC LIMIT 3"),
-      dbAll("SELECT id, nombre, codigo, estado FROM obras ORDER BY createdAt DESC LIMIT 3"),
-      dbAll("SELECT id, trabajadorId, obraId, fecha, horas, tipo FROM horas ORDER BY createdAt DESC LIMIT 3"),
-      dbAll("SELECT id, tipo, importe, fecha, concepto, responsableId FROM movimientos ORDER BY createdAt DESC LIMIT 3"),
-      dbAll("SELECT clave, substr(valor, 1, 120) AS valor FROM settings ORDER BY clave ASC LIMIT 5"),
-    ]);
+    // ✅ 100% DEFENSIVO: SELECT * SIN nombrar columnas + try/catch INDIVIDUAL → NUNCA rompe aunque falte una columna
+    let rowsTrabajadores = [], rowsObras = [], rowsHoras = [], rowsMov = [], rowsSettings = [];
+    try { rowsTrabajadores = await dbAll("SELECT * FROM trabajadores ORDER BY nombre ASC LIMIT 3"); } catch(e) { rowsTrabajadores = [{_error: e.message}]; }
+    try { rowsObras = await dbAll("SELECT * FROM obras ORDER BY createdAt DESC LIMIT 3"); } catch(e) { rowsObras = [{_error: e.message}]; }
+    try { rowsHoras = await dbAll("SELECT * FROM horas ORDER BY createdAt DESC LIMIT 3"); } catch(e) { rowsHoras = [{_error: e.message}]; }
+    try { rowsMov = await dbAll("SELECT * FROM movimientos ORDER BY createdAt DESC LIMIT 3"); } catch(e) { rowsMov = [{_error: e.message}]; }
+    try { rowsSettings = await dbAll("SELECT clave, substr(valor, 1, 120) AS valor FROM settings ORDER BY clave ASC LIMIT 5"); } catch(e) { rowsSettings = [{_error: e.message}]; }
     const payload = {
       timestamp: d.toISOString(),
       ok: true,

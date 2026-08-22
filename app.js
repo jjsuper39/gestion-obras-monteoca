@@ -371,18 +371,54 @@ async function generarInformeDiagnosticoCompleto() {
     P("");
     P("🧪 MUESTRAS (últimas 3 filas de cada tabla en la BBDD REAL):");
     if (health.muestras) {
+      // Helper para MOSTRAR TODAS LAS COLUMNAS (nunca más fallo por nombre de columna que no existe!):
+      function mostrarFila(fila, maxLongClave = 20) {
+        const partes = [];
+        Object.entries(fila || {}).forEach(([k, v]) => {
+          const clave = String(k).padEnd(maxLongClave, " ").slice(0, maxLongClave);
+          let valor;
+          if (v === null || v === undefined) valor = "null";
+          else if (typeof v === "boolean") valor = v ? "1" : "0";
+          else {
+            valor = String(v);
+            if (valor.length > 60) valor = valor.slice(0, 60) + "...";
+          }
+          partes.push(`${clave}=${valor}`);
+        });
+        return partes.join(" | ");
+      }
       const MT = health.muestras.ultimos3Trabajadores || [];
-      if (MT.length) { P("→ Trabajadores (muestra 3):"); MT.forEach((t, i) => P(`   ${i+1}) ID=${t.id} NOMBRE="${t.nombre}" ROL=${t.rol} ACTIVO=${t.activo}`)); }
-      else P("→ Trabajadores: NINGÚN DATO");
+      if (MT.length) {
+        P("→ Trabajadores (muestra " + MT.length + "):");
+        MT.forEach((t, i) => {
+          if (t._error) P(`   ${i+1}) ❌ ERROR: ${t._error}`);
+          else P(`   ${i+1}) ${mostrarFila(t)}`);
+        });
+      } else P("→ Trabajadores: NINGÚN DATO");
       const MO = health.muestras.ultimas3Obras || [];
-      if (MO.length) { P("→ Obras (muestra 3):"); MO.forEach((o, i) => P(`   ${i+1}) ID=${o.id} NOMBRE="${o.nombre}" CODIGO=${o.codigo||"-"} ESTADO=${o.estado||"-"}`)); }
-      else P("→ Obras: NINGÚN DATO");
+      if (MO.length) {
+        P("→ Obras (muestra " + MO.length + "):");
+        MO.forEach((o, i) => {
+          if (o._error) P(`   ${i+1}) ❌ ERROR: ${o._error}`);
+          else P(`   ${i+1}) ${mostrarFila(o)}`);
+        });
+      } else P("→ Obras: NINGÚN DATO");
       const MH = health.muestras.ultimas3Horas || [];
-      if (MH.length) { P("→ Horas (muestra 3):"); MH.forEach((h, i) => P(`   ${i+1}) ID=${h.id} trabajador=${h.trabajadorId} obra=${h.obraId} FECHA=${h.fecha} HORAS=${h.horas} TIPO=${h.tipo}`)); }
-      else P("→ Horas: NINGÚN DATO");
+      if (MH.length) {
+        P("→ Horas (muestra " + MH.length + "):");
+        MH.forEach((h, i) => {
+          if (h._error) P(`   ${i+1}) ❌ ERROR: ${h._error}`);
+          else P(`   ${i+1}) ${mostrarFila(h)}`);
+        });
+      } else P("→ Horas: NINGÚN DATO");
       const MM = health.muestras.ultimos3Mov || [];
-      if (MM.length) { P("→ Movimientos (muestra 3):"); MM.forEach((m, i) => P(`   ${i+1}) ID=${m.id} TIPO=${m.tipo} IMPORTE=${m.importe}€ FECHA=${m.fecha} CONCEPTO="${m.concepto||"-"}"`)); }
-      else P("→ Movimientos: NINGÚN DATO");
+      if (MM.length) {
+        P("→ Movimientos (muestra " + MM.length + "):");
+        MM.forEach((m, i) => {
+          if (m._error) P(`   ${i+1}) ❌ ERROR: ${m._error}`);
+          else P(`   ${i+1}) ${mostrarFila(m)}`);
+        });
+      } else P("→ Movimientos: NINGÚN DATO");
     }
     P("");
     // Comparativa BBDD real vs state en frontend
@@ -1018,9 +1054,32 @@ function bindLoginEvents() {
         lines.push(`   · 💵 Movimientos:  ${healthResp.tables.movimientos} (Ingresos: ${healthResp.movimientosPorTipo.ingreso||0}, Gastos: ${healthResp.movimientosPorTipo.gasto||0})`);
         const totalReal = healthResp.tables.trabajadores + healthResp.tables.obras + healthResp.tables.horas + healthResp.tables.movimientos;
         lines.push(`   · TOTAL REAL: ${totalReal} ${totalReal === 0 ? "⚠️ (LA BASE DE DATOS REALMENTE ESTÁ VACÍA! Los datos NUNCA se guardaron en Turso!)" : "✅ (>0 hay datos)"}`);
+        // Muestras sin hardcodear nombres de columnas!
+        function mostrarF(fila, max=18) {
+          return Object.entries(fila || {}).map(([k,v]) => {
+            const c = String(k).padEnd(max, " ").slice(0, max);
+            let val = (v === null || v === undefined) ? "null" : String(v);
+            if (val.length > 50) val = val.slice(0, 50) + "...";
+            return `${c}=${val}`;
+          }).join(" | ");
+        }
+        function agregarMuestras(titulo, arr) {
+          if (!arr || !arr.length) return;
+          lines.push(`\n   🧪 Muestras - ${titulo}:`);
+          arr.forEach((f, i) => {
+            if (f._error) lines.push(`      ${i+1}) ❌ ERROR: ${String(f._error).slice(0,200)}`);
+            else lines.push(`      ${i+1}) ${mostrarF(f)}`);
+          });
+        }
+        if (healthResp.muestras) {
+          agregarMuestras("Trabajadores (últimos 3)", healthResp.muestras.ultimos3Trabajadores);
+          agregarMuestras("Obras (últimas 3)",        healthResp.muestras.ultimas3Obras);
+          agregarMuestras("Horas (últimas 3)",        healthResp.muestras.ultimas3Horas);
+          agregarMuestras("Movimientos (últimos 3)",  healthResp.muestras.ultimos3Mov);
+        }
       } else {
         lines.push(`❌ NO SE PUDO CONSULTAR LA BBDD REAL:`);
-        lines.push(`   Motivo: ${String(healthError || "desconocido").slice(0, 200)}`);
+        lines.push(`   Motivo: ${String(healthError || "desconocido").slice(0, 400)}`);
       }
       lines.push("");
       lines.push("══════════════════════════════════════════");
