@@ -256,7 +256,74 @@ async function guardarBackupAutomatico(motivo = "auto_arranque") {
 });
 
 /* =============== ENDPOINTS / DATOS GENERALES =============== */
+
+// ✅ [DIAGNÓSTICO CRÍTICO] CONTADORES REALES DE LA BBDD (sin autenticar, público).
+// Devuelve el nº de filas en CADA TABLA. Así el usuario puede COMPROBAR si los datos
+// están GUARDADOS DE VERDAD en Turso/SQLite, o si el frontend no los está mostrando.
+app.get("/api/health/diagnostico", async (req, res) => {
+  try {
+    const [
+      cTrabajadores, cObras, cHoras, cMovimientos, cSettings
+    ] = await Promise.all([
+      dbGet("SELECT COUNT(*) AS c FROM trabajadores"),
+      dbGet("SELECT COUNT(*) AS c FROM obras"),
+      dbGet("SELECT COUNT(*) AS c FROM horas"),
+      dbGet("SELECT COUNT(*) AS c FROM movimientos"),
+      dbGet("SELECT COUNT(*) AS c FROM settings"),
+    ]);
+    const d = new Date();
+    let categoriasMov = { ingreso: 0, gasto: 0 };
+    try {
+      const resp = await dbAll("SELECT tipo, COUNT(*) AS c FROM movimientos GROUP BY tipo");
+      resp.forEach(r => { categoriasMov[String(r.tipo).toLowerCase()] = Number(r.c) || 0; });
+    } catch {}
+    let adminPinExiste = false;
+    try {
+      const row = await dbGet("SELECT valor FROM settings WHERE clave = ?", ["admin_pin"]);
+      adminPinExiste = !!row?.valor;
+    } catch {}
+    const payload = {
+      timestamp: d.toISOString(),
+      ok: true,
+      motor: USE_TURSO ? "TURSO CLOUD (persistente)" : "SQLITE LOCAL (efímero en Render sin disco)",
+      motorUsaTurso: USE_TURSO,
+      isRender: IS_RENDER,
+      tables: {
+        trabajadores: Number(cTrabajadores?.c ?? 0),
+        obras: Number(cObras?.c ?? 0),
+        horas: Number(cHoras?.c ?? 0),
+        movimientos: Number(cMovimientos?.c ?? 0),
+        settings: Number(cSettings?.c ?? 0),
+      },
+      movimientosPorTipo: categoriasMov,
+      adminPinExiste,
+      warning: IS_RENDER && !USE_TURSO ? "⚠️ ESTÁS EN RENDER PERO SIN TURSO → ESTOS DATOS SE BORRARÁN CADA REDEPLOY." : null
+    };
+    console.log("🏥 DIAGNÓSTICO BBDD OK:", payload.tables, payload.warning || "");
+    res.json(payload);
+  } catch (e) {
+    console.error("❌ DIAGNÓSTICO BBDD FALLÓ:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get("/api/sync", authMiddleware, async (req, res) => {
+  // ✅ [DIAGNÓSTICO] Antes de enviar sync, hacemos count reales y los incluimos (front puede comparar):
+  let _counters = {};
+  try {
+    const [a,b,c,d] = await Promise.all([
+      dbGet("SELECT COUNT(*) AS c FROM trabajadores"),
+      dbGet("SELECT COUNT(*) AS c FROM obras"),
+      dbGet("SELECT COUNT(*) AS c FROM horas"),
+      dbGet("SELECT COUNT(*) AS c FROM movimientos"),
+    ]);
+    _counters = {
+      _realTrabajadoresEnBBDD: Number(a?.c||0),
+      _realObrasEnBBDD: Number(b?.c||0),
+      _realHorasEnBBDD: Number(c?.c||0),
+      _realMovEnBBDD: Number(d?.c||0),
+    };
+  } catch {}
   const trabajadores = (await dbAll("SELECT * FROM trabajadores ORDER BY nombre ASC")).map(normalizeTrabajador);
   const obras = (await dbAll("SELECT * FROM obras ORDER BY nombre ASC")).map(normalizeObra);
   const horas = (await dbAll("SELECT * FROM horas ORDER BY fecha DESC, createdAt DESC")).map(normalizeHora);
@@ -267,6 +334,7 @@ app.get("/api/sync", authMiddleware, async (req, res) => {
     adminPin: req.user.role === "admin" ? (row?.valor || DEFAULT_ADMIN_PIN) : null,
     currentUser: req.user,
     generadoEn: new Date().toISOString(),
+    ..._counters, // incluimos los contadores REALES para el front (debug móvil muestra comparación!)
   };
   if (req.user.role === "admin") {
     try {
