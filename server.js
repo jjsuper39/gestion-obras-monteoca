@@ -35,42 +35,57 @@ let tursoClient = null; // Driver @libsql/client (si usamos Turso cloud)
 
 /* =============== HELPERS DB (COMPATIBLES CON AMBOS MOTORES) =============== */
 async function dbAll(sql, params = []) {
+  const _t0 = Date.now();
   try {
+    let rows = [];
     if (USE_TURSO) {
       const rs = await tursoClient.execute({ sql, args: params });
-      return rs.rows.map((r) => Object.fromEntries(Object.entries(r)));
+      rows = rs.rows.map((r) => Object.fromEntries(Object.entries(r)));
+    } else {
+      rows = await db.all(sql, params);
     }
-    return db.all(sql, params);
+    console.log(`🗄️  dbAll OK (${Date.now()-_t0}ms) → ${sql.split("\n"," ").slice(0,120)}  params=${JSON.stringify(params||[]).length} chars → ${rows.length} filas`);
+    return rows;
   } catch (e) {
-    console.error("❌ dbAll ERROR SQL:", sql, params, e.message);
-    throw e;
-  }
+      console.error(`\n\n❌❌❌ dbAll FALLO SQL (ms=${Date.now()-_t0}ms)  SQL: ${sql}  PARAMS: ${JSON.stringify(params)}\n   MENSAJE: ${e.message}\n   STACK: ${(e.stack||"").slice(0,400)}\n\n`);
+      throw e;
+    }
 }
 async function dbGet(sql, params = []) {
+  const _t0 = Date.now();
   try {
+    let row = null;
     if (USE_TURSO) {
       const rs = await tursoClient.execute({ sql, args: params });
-      return rs.rows.length ? Object.fromEntries(Object.entries(rs.rows[0])) : null;
+      row = rs.rows.length ? Object.fromEntries(Object.entries(rs.rows[0])) : null;
+    } else {
+      row = await db.get(sql, params);
     }
-    return db.get(sql, params);
+    console.log(`🗄️   dbGet OK (${Date.now()-_t0}ms) → ${sql.replace(/\s+/g," ").slice(0,120)}  params=${JSON.stringify(params||[]).length} chars → ${row? "1 fila":"nulo"}`);
+    return row;
   } catch (e) {
-    console.error("❌ dbGet ERROR SQL:", sql, params, e.message);
-    throw e;
-  }
+      console.error(`\n\n❌❌❌ dbGet FALLO SQL (${Date.now()-_t0}ms)  SQL: ${sql}  PARAMS: ${JSON.stringify(params)}\n   MENSAJE: ${e.message}\n   STACK: ${(e.stack||"").slice(0,400)}\n\n`);
+      throw e;
+    }
 }
 async function dbRun(sql, params = []) {
+  const _t0 = Date.now();
   try {
+    let res = null;
     if (USE_TURSO) {
       const rs = await tursoClient.execute({ sql, args: params });
       const lastId = Number(rs.lastInsertRowid) || null;
       const changes = Number(rs.rowsAffected) || 0;
-      return { lastID: lastId, changes };
+      res = { lastID: lastId, changes };
+    } else {
+      const r = await db.run(sql, params);
+      res = { lastID: r.lastID, changes: r.changes };
     }
-    const r = await db.run(sql, params);
-    return { lastID: r.lastID, changes: r.changes };
+    console.log(`🗄️  dbRun OK (${Date.now()-_t0}ms) → ${sql.replace(/\s+/g," ").slice(0,120)}  params=${JSON.stringify(params||[]).length} chars → changes=${res.changes} id=${res.lastID}`);
+    return res;
   } catch (e) {
-    console.error("❌ dbRun ERROR SQL:", sql, params, e.message);
-    throw e;
+      console.error(`\n\n❌❌❌ dbRun FALLO SQL (${Date.now()-_t0}ms)  SQL: ${sql}  PARAMS: ${JSON.stringify(params)}\n   MENSAJE: ${e.message}\n   STACK: ${(e.stack||"").slice(0,400)}\n\n`);
+      throw e;
   }
 }
 
@@ -78,6 +93,14 @@ async function dbRun(sql, params = []) {
 const app = express();
 app.use(cors({ maxAge: 0, origin: true, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
+
+// ✅ WRAPPER ASYNC-SAFE (IMPORTANTE!): Evita que Express pierda errores asíncronos de async/await
+// en los endpoints (antes se perdían sin mensaje y salía error 500 genérico).
+function handle(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch((err) => next(err || new Error("Error sin mensaje")));
+  };
+}
 
 // ✅ [DIAGNÓSTICO USUARIO] LOG DE TODAS LAS PETICIONES API (para ver qué falla en Render):
 let CONTADOR_PETICIONES = 0;
@@ -260,7 +283,7 @@ async function guardarBackupAutomatico(motivo = "auto_arranque") {
 // ✅ [DIAGNÓSTICO CRÍTICO] CONTADORES REALES DE LA BBDD (sin autenticar, público).
 // Devuelve el nº de filas en CADA TABLA. Así el usuario puede COMPROBAR si los datos
 // están GUARDADOS DE VERDAD en Turso/SQLite, o si el frontend no los está mostrando.
-app.get("/api/health/diagnostico", async (req, res) => {
+app.get("/api/health/diagnostico", handle(async (req, res) => {
   try {
     const [
       cTrabajadores, cObras, cHoras, cMovimientos, cSettings
@@ -320,11 +343,16 @@ app.get("/api/health/diagnostico", async (req, res) => {
     res.json(payload);
   } catch (e) {
     console.error("❌ DIAGNÓSTICO BBDD FALLÓ:", e.message);
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(500).json({
+      ok: false,
+      error: e.message,
+      sql: e.sql || null,
+      stack: (e.stack || "").slice(0, 500),
+    });
   }
-});
+}));
 
-app.get("/api/sync", authMiddleware, async (req, res) => {
+app.get("/api/sync", authMiddleware, handle(async (req, res) => {
   // ✅ [DIAGNÓSTICO] Antes de enviar sync, hacemos count reales y los incluimos (front puede comparar):
   let _counters = {};
   try {
@@ -365,7 +393,7 @@ app.get("/api/sync", authMiddleware, async (req, res) => {
     } catch {}
   }
   res.json(resp);
-});
+}));
 
 app.get("/api/backup/exportar", authMiddleware, requireAdmin, async (req, res) => {
   const [trabajadores, obras, horas, movimientos, settings] = await Promise.all([
@@ -682,9 +710,32 @@ app.get("*", (req, res, next) => {
   res.status(404).end("Not Found");
 });
 
+// ✅ [DIAGNÓSTICO 500 TOTAL: Middleware GLOBAL Express (4 argumentos: err,req,res,next).
+// ESTE MIDDLEWARE RECIBE TODOS LOS ERRORES QUE SEÑALADOS con next(err) gracias al Wrapper handle(fn) anterior.
+// Devuelve un JSON con mensaje exacto del fallo (con lo que hay que solucionar y se muestra EN ROJO en LOGS Render.
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: err.message || "Error interno" });
+  try {
+    const id = res.locals?.peticionId || ("#" + Math.floor(Math.random()*9999));
+    const msg = err?.message || String(err) || "Error desconocido";
+    const stack = (err?.stack || "").toString().slice(0, 600);
+    console.error(`\n\n═══════════════════════════════════════════════════════════════════\n` +
+      `🚨 ERROR 500 NO MANEJADO EN PETICIÓN ${id} ${req.method} ${req.url}\n` +
+      `   MENSAJE: ${msg}\n` +
+      `   STACK (primeras líneas):\n${stack}\n` +
+      `   Body recibido: ${JSON.stringify(req.body||"").slice(0, 400)}\n` +
+      `   Query: ${JSON.stringify(req.query||"").slice(0, 300)}\n` +
+      `═══════════════════════════════════════════════════════════════════\n\n`);
+    if (res.headersSent) return; // ya enviado
+    return res.status(500).json({
+      error: msg,
+      detalle: "Error interno del servidor. Mira los LOGS de Render (arriba rojo) para la causa EXACTA.",
+      ruta: `${req.method} ${req.url}`,
+      stack: stack.slice(0, 400),
+      ok: false,
+    });
+  } catch (e2) {
+    try { res.status(500).json({ error: "Error catastrófico", ok: false }); } catch {}
+  }
 });
 
 /* =============== AUXILIARES =============== */
