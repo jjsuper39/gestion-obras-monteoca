@@ -1073,7 +1073,7 @@ app.get("/api/diag/entregas-completo", authMiddleware, handle(async (req, res) =
     login: req.user?.login || null,
     raw: JSON.stringify(req.user || {}, null, 2),
   };
-  const trabajadores = await dbAll(`SELECT id, nombre, rol, pin, activo, fechaAlta FROM trabajadores ORDER BY id ASC;`);
+  const trabajadores = await dbAll(`SELECT id, nombre, rol, pin, activo FROM trabajadores ORDER BY id ASC;`);
   const todosMov = await dbAll(`SELECT * FROM movimientos ORDER BY fecha DESC, createdAt DESC;`);
   const esEntregaNomina = (m) => {
     if (!m) return false;
