@@ -836,19 +836,41 @@ app.get("/api/cajas", authMiddleware, requireAdmin, handle(async (req, res) => {
   });
 }));
 
-// ✅ [REPARACIÓN MANUAL POR SI UN MOVIMIENTO TIENE realizadoPorId NULL]
-//    Botón frontend "Reparar Cajas" (en Herramientas Admin) ejecuta este endpoint.
-//    Regla: si realizadoPorId = NULL / "" (antiguos):
-//       → Si responsableId ES ADMIN o SOCIO → le asignamos el MISMO id (cobró Juanje, entra en caja de Juanje)
-//       → Si NO (trabajador Kevin, entrega nómina de 40/50€), le asignamos el SOCIO PRINCIPAL (Juanje)
+// ✅ [REPARACIÓN MANUAL POR SI UN MOVIMIENTO TIENE realizadoPorId O responsableId NULL]
+//    Botón frontend "Reparar Cajas" (En 💵 Cajas o ⚒️ Herramientas Admin) ejecuta este endpoint.
+//    Repara AMBAS columnas: realizadoPorId (caja socio) Y responsableId (entregas Kevin):
 app.post("/api/cajas/reparar", authMiddleware, requireAdmin, handle(async (req, res) => {
   let corregidos = 0;
   let socioId = null;
+  let trabajadorId = null;
   const filaAdmin = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
   if (filaAdmin && filaAdmin.id) socioId = filaAdmin.id;
 
+  // Buscar PRIMER TRABAJADOR con rol trabajador (ej: Kevin, el que recibe entregas nómina):
+  const filaTrab = await dbGet(`SELECT id FROM trabajadores WHERE LOWER(COALESCE(rol,'')) NOT IN ('admin','socio') ORDER BY id ASC LIMIT 1;`);
+  if (filaTrab && filaTrab.id) trabajadorId = filaTrab.id;
+
   if (socioId) {
-    // Regla 1: Si responsableId es ADMIN / SOCIO y realizadoPorId está vacío → le asigna responsableId (el cobro de Juanje = caja Juanje):
+    // =============== PRIMERO: REPARAR responsableId (para que KEVIN VE entregas en su vista) ===============
+    // Si movimiento es TIPO GASTO y responsableId = NULL, y su concepto/categoría es entrega/anticipo/nómina:
+    // -> se lo asignamos al PRIMER TRABAJADOR (Kevin)
+    if (trabajadorId) {
+      let updResp = await dbRun(`UPDATE movimientos SET responsableId = ?
+        WHERE (responsableId IS NULL OR TRIM(responsableId) = '')
+        AND LOWER(COALESCE(tipo,'')) = 'gasto'
+        AND (
+          LOWER(COALESCE(categoria,'')) LIKE '%nomin%'
+          OR LOWER(COALESCE(concepto,'')) LIKE '%entrega%'
+          OR LOWER(COALESCE(concepto,'')) LIKE '%anticipo%'
+          OR LOWER(COALESCE(concepto,'')) LIKE '%nomina%'
+          OR LOWER(COALESCE(concepto,'')) LIKE '%adelanto%'
+          OR LOWER(COALESCE(concepto,'')) LIKE '%cuenta%'
+        )`, [trabajadorId]);
+      corregidos += Number(typeof updResp.changes ?? updResp.rowsAffected ?? 0) || 0;
+    }
+
+    // =============== LUEGO: REPARAR realizadoPorId (CAJAS SOCIOS, Juanje) ===============
+    // Regla 1: Si responsableId es ADMIN / SOCIO y realizado vacío → asignamos responsableId (cobró 6000, entra caja Juanje):
     let upd1 = await dbRun(`UPDATE movimientos SET realizadoPorId = responsableId
       WHERE (realizadoPorId IS NULL OR TRIM(realizadoPorId) = '')
       AND responsableId IS NOT NULL AND TRIM(responsableId) != ''
@@ -858,21 +880,25 @@ app.post("/api/cajas/reparar", authMiddleware, requireAdmin, handle(async (req, 
       )`);
     corregidos += Number(typeof upd1.changes ?? upd1.rowsAffected ?? 0) || 0;
 
-    // Regla 2: resto (Kevin = trabajador, entregas a cuenta): asignamos SOCIO PRINCIPAL a realizadoPorId:
+    // Regla 2: Si responsableId = TRABAJADOR (Kevin) y realizado vacío → socioId (Juanje pagó la entrega):
     let upd2 = await dbRun(`UPDATE movimientos SET realizadoPorId = ?
       WHERE (realizadoPorId IS NULL OR TRIM(realizadoPorId) = '')
-      AND responsableId IS NOT NULL AND TRIM(responsableId) != ''`, [socioId]);
+      AND responsableId IS NOT NULL AND TRIM(responsableId) != ''
+      AND EXISTS (
+        SELECT 1 FROM trabajadores t3
+        WHERE t3.id = responsableId AND LOWER(COALESCE(t3.rol,'')) NOT IN ('admin','socio')
+      )`, [socioId]);
     corregidos += Number(typeof upd2.changes ?? upd2.rowsAffected ?? 0) || 0;
 
-    // Regla 3: si todavía quedan movimientos CON responsableId PERO SIN socio (o vacío totalmente):
+    // Regla 3 (último recurso): si SIGUE habiendo vacíos, socio principal (Juanje):
     let upd3 = await dbRun(`UPDATE movimientos SET realizadoPorId = ?
       WHERE (realizadoPorId IS NULL OR TRIM(realizadoPorId) = '')`, [socioId]);
     corregidos += Number(typeof upd3.changes ?? upd3.rowsAffected ?? 0) || 0;
 
-    console.log(`✅ [REPARAR CAJAS] ${corregidos} movimientos corregidos, socio principal = ${socioId}`);
+    console.log(`✅ [REPARAR CAJAS] ${corregidos} movs arreglados. socio=${socioId}, 1er trabajador=${trabajadorId}`);
   }
 
-  res.json({ ok: true, corregidos, socioPrincipal: socioId });
+  res.json({ ok: true, corregidos, socioPrincipal: socioId, primerTrabajadorId: trabajadorId });
 }));
 
 /* =============== FALLBACK SPA =============== */

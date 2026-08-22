@@ -3660,7 +3660,22 @@ async function renderMisEntregasCuenta() {
         </tr>`;
       }).join("");
     } else {
-      tbody.innerHTML = `<tr><td colspan="4" class="empty">Todavía no tienes entregas a cuenta guardadas. Cuando el administrador te entregue un adelanto de nómina aparecerán aquí ordenados por fecha, con importe, concepto y quién te lo entregó.</td></tr>`;
+      const textoExtraAdmin = isAdmin()
+        ? `<div style="margin-top:10px;padding:10px 14px;border:2px dashed #b91c1c;background:#fef2f2;border-radius:10px;font-weight:600;color:#991b1b;">
+            ⚠️ <strong>ERES ADMIN / SOCIO:</strong><br>
+            Si los trabajadores SÍ tienen entregas guardadas en la BBDD pero aquí NO SALEN: es que tienen el campo <em>Responsable (Caja Trabajador)</em> = vacío (NULL).<br>
+            <strong>Solución 1 CLICK:</strong> Ve a 💵 <strong>Cajas / Saldos Socios</strong> → Pulsa el botón VERDE <strong>🔧 REPARAR CAJAS</strong> → luego vuelve aquí y pulsa 💸 Actualizar entregas.
+          </div>`
+        : `<div style="margin-top:10px;padding:10px 14px;border:2px dashed #92400e;background:#fffbeb;border-radius:10px;font-weight:600;color:#78350f;">
+            💡 <strong>Nota:</strong> Si crees que SÍ te han dado dinero de adelanto y no aparece, habla con tu administrador (Juanje) para que te asigne correctamente la entrega a tu nombre o pulse <em>Reparar Cajas</em>.
+          </div>`;
+      tbody.innerHTML = `<tr><td colspan="4" class="empty">
+        <div style="padding:20px 10px;">
+          <div style="font-size:1.1em;"><strong>Todavía no tienes entregas a cuenta guardadas.</strong></div>
+          <div class="hint" style="margin-top:10px;">Cuando el administrador te entregue un adelanto de nómina aparecerán aquí ordenados por fecha, con importe, concepto y quién te lo entregó.</div>
+          ${textoExtraAdmin}
+        </div>
+      </td></tr>`;
     }
   } catch (e) {
     console.warn(e);
