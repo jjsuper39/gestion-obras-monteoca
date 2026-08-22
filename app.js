@@ -310,11 +310,38 @@ function recalcularDesgloseTrabajadorFechasAfectadas(trabajadorId, fechasArray) 
 /* ============ AUTH / LOGIN (cloud) ============ */
 function getAdminPin() { return state.adminPin || DEFAULT_ADMIN_PIN; }
 function saveSession() { localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(state.session)); }
+
+// ✅ FORZAR CONSISTENCIA: si NO HAY TOKEN, entonces NUNCA puede haber sesión iniciada.
+// (Este es el bug que te tenía "datos a 0": móvil tenía role guardado pero token se perdió al limpiar caché.)
+function forzarConsistenciaLogin() {
+  const tok = getToken();
+  if (!tok) {
+    clearSession();
+    state.trabajadores = []; state.obras = []; state.horas = []; state.movimientos = [];
+    return false;
+  }
+  if (!state.session || !state.session.role) {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.SESSION);
+      if (raw) state.session = JSON.parse(raw);
+    } catch { state.session = { role: null, trabajadorId: null }; }
+    if (!state.session?.role) { clearSession(); return false; }
+  }
+  return true;
+}
 function loadSession() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SESSION);
-    state.session = raw ? JSON.parse(raw) : { role: null, trabajadorId: null };
-  } catch { state.session = { role: null, trabajadorId: null }; }
+  forzarConsistenciaLogin();
+  if (!state.session) state.session = { role: null, trabajadorId: null };
+  const banner = document.getElementById("bannerSesionPerdida");
+  if (banner) {
+    if (!getToken() || !state.session?.role) {
+      banner.classList.remove("hidden");
+      // MOSTRAR LOGIN SIEMPRE cuando no hay sesión (nunca más paneles vacíos a 0!)
+      try { showLoginScreen(); } catch {}
+    } else banner.classList.add("hidden");
+  }
+  const btnAdmin = document.getElementById("btnPestTrabajadores");
+  if (btnAdmin) btnAdmin.style.display = (state.session?.role !== "admin") ? "none" : "";
 }
 function clearSession() {
   state.session = { role: null, trabajadorId: null };
@@ -323,6 +350,7 @@ function clearSession() {
 function logout(silent) {
   setToken(null); clearSession();
   ["trabajadores","obras","horas","movimientos"].forEach(k => state[k] = []);
+  try { const b = document.getElementById("bannerSesionPerdida"); if (b) b.classList.remove("hidden"); } catch {}
   if (!silent) { showLoginScreen(); }
 }
 
@@ -492,7 +520,19 @@ async function loginWorker(trabajadorId, pin) {
 
 async function loadAllData(silent = false, force = false) {
   loadSession();
-  if (!getToken() || !state.session.role) return false;
+  // ✅ COMPROBACIÓN OBLIGATORIA: si NO HAY TOKEN (sin login), NUNCA intentamos pedir datos.
+  // Avisamos al usuario y mostramos el login (evitamos "datos a 0" sin explicación!)
+  if (!forzarConsistenciaLogin() || !getToken() || !state.session?.role) {
+    if (!silent) {
+      logout(true);
+      showLoginScreen();
+      try {
+        const loginErr = document.getElementById("loginError");
+        if (loginErr) loginErr.textContent = "⚠️ Tu sesión se ha perdido (sin token). Vuelve a introducir el PIN para ver tus datos.";
+      } catch {}
+    }
+    return false;
+  }
   const now = Date.now();
   if (!force && !silent) {
     if (_loadLock) return _loadLock;
@@ -501,7 +541,6 @@ async function loadAllData(silent = false, force = false) {
   if (!force && (now - _lastLoadedAt) < _MIN_MS_BETWEEN_LOADS) return true;
   try {
     _loadLock = (async () => {
-      // REINICIO ABSOLUTO DEL STATE ANTES DE DESCARGAR (el bug de datos obsoletos)
       state.trabajadores = []; state.obras = []; state.horas = []; state.movimientos = []; state.cajasData = null;
       state._diagnosticoSync = null;
       const d = await api("/api/sync");
@@ -510,7 +549,6 @@ async function loadAllData(silent = false, force = false) {
       state.horas = Array.isArray(d.horas) ? d.horas : [];
       state.movimientos = Array.isArray(d.movimientos) ? d.movimientos : [];
       if (d.adminPin) state.adminPin = d.adminPin;
-      // ✅ GUARDAR DIAGNÓSTICO COMPARACIÓN: LO QUE DIJO LA BBDD QUE HABÍA, vs LO QUE REALMENTE ENVIÓ
       state._diagnosticoSync = {
         generadoEn: d.generadoEn,
         realBBDD: {
@@ -526,7 +564,6 @@ async function loadAllData(silent = false, force = false) {
           movimientos: state.movimientos.length,
         }
       };
-      // ✅ SI HAY INCONGRUENCIA (BBDD tiene X pero el front recibe 0), LO LOGGEAMOS COMO ERROR:
       const diag = state._diagnosticoSync;
       const incongruencias = [];
       ["trabajadores","obras","horas","movimientos"].forEach(k => {
@@ -553,11 +590,19 @@ async function loadAllData(silent = false, force = false) {
       _lastLoadedAt = Date.now();
       state.ultimaSync = new Date();
       try { actualizarBadgeUltimaSync(); } catch {}
+      try { comprobarPerdidaDatosPotencial(); } catch {}
       return true;
     })();
     return await _loadLock;
   } catch (e) {
-    if (!silent) logout(true);
+    if (!silent) {
+      // Si falló /api/sync por 401: hacemos logout forzado y mostramos login.
+      try { logout(true); showLoginScreen(); } catch {}
+      try {
+        const loginErr = document.getElementById("loginError");
+        if (loginErr) loginErr.textContent = "⚠️ Error al cargar tus datos: " + e.message;
+      } catch {}
+    }
     return false;
   } finally {
     _loadLock = null;
@@ -654,6 +699,36 @@ function bindLoginEvents() {
   const btnDebugMovil = document.getElementById("btnDebugMovil");
   if (btnDebugMovil) btnDebugMovil.addEventListener("click", async () => {
     try {
+      forzarConsistenciaLogin(); // comprobar antes de NADA si tenemos token
+      if (!getToken() || !state.session?.role) {
+        // ⚠️ CASO ESPECIAL GRAVE: SIN TOKEN = no estás loggeado (causa datos a 0).
+        // Mostramos mensaje CLARO (no el críptico "motivo: sin token"):
+        const linesIntro = [
+          "═══════════════════════════════════════════",
+          "⚠️  CAUSA DE QUE LOS DATOS ESTÉN A 0:",
+          "═══════════════════════════════════════════",
+          "❌ NO ESTÁS LOGGEADO (NO HAY TOKEN GUARDADO).",
+          "",
+          "Sin iniciar sesión el servidor NUNCA te envía datos.",
+          "Tu móvil perdió el token al cerrar el navegador, limpiar caché o pasar mucho tiempo.",
+          "",
+          "✅ SOLUCIÓN 10 SEGUNDOS:",
+          "1) Cierra este mensaje pulsando [Cancelar].",
+          "2) Pulsa el botón ROJO GRANDE que aparece ARRIBA del todo en la app.",
+          "   O pulsa 🚪 SALIR (arriba a la derecha).",
+          "3) Aparecerá el login: introduce tu PIN:",
+          "   · Si eres ADMIN: PIN admin 1234 (o el tuyo personalizado).",
+          "   · Si eres TRABAJADOR: elige tu nombre + tu PIN de 4 dígitos.",
+          "4) Entra y vuelve a pulsar 📱 Debug Móvil: todo OK.",
+          "",
+          "Pulsa [Aceptar] si quieres ir directamente al Login ahora.",
+        ];
+        const okIrLogin = confirm(linesIntro.join("\n"));
+        if (okIrLogin) {
+          logout(true); showLoginScreen();
+        }
+        return; // no seguir con pruebas, sería inútil
+      }
       // Cargar últimos errores del storage (si hay):
       try {
         const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.ULTIMO_ERROR) || "[]");
@@ -2647,6 +2722,15 @@ async function init() {
   });
   window.addEventListener("online", async () => { try { await forceSyncUI(); } catch {} });
   setInterval(silentRefresh, POLLING_MS);
+  // 👁️ VIGILANTE DE SESIÓN: cada 30s comprueba que TOKEN + SESIÓN existan.
+  // Si el usuario limpió caché en segundo plano, lo mandamos a login de inmediato.
+  setInterval(() => {
+    const ok = forzarConsistenciaLogin();
+    if (!ok) {
+      try { loadSession(); } catch {}
+      try { logout(true); showLoginScreen(); } catch {}
+    }
+  }, 30000);
   // Badge móvil visible en navbar para saber que estamos en modo móvil optimizado
   const syncBadge = document.getElementById("ultimaSyncInfo");
   if (syncBadge && IS_MOBILE) syncBadge.title = "📱 MODO MÓVIL ACTIVADO: sincroniza más rápido (25s). Si no ves datos nuevos pulsa 🔄 Sincronizar.";
